@@ -1,0 +1,207 @@
+{
+  "stations": [
+    {
+      "id": "s-tucheng",
+      "city": "新北市",
+      "name": "土城分隊",
+      "active": true
+    },
+    {
+      "id": "s-dingpu",
+      "city": "新北市",
+      "name": "頂埔分隊",
+      "active": true
+    },
+    {
+      "id": "s-qingshui",
+      "city": "新北市",
+      "name": "清水分隊",
+      "active": true
+    },
+    {
+      "id": "s-shulin",
+      "city": "新北市",
+      "name": "樹林分隊",
+      "active": true
+    },
+    {
+      "id": "s-shutan",
+      "city": "新北市",
+      "name": "樹潭分隊",
+      "active": true
+    },
+    {
+      "id": "s-ganyuan",
+      "city": "新北市",
+      "name": "柑園分隊",
+      "active": true
+    },
+    {
+      "id": "s-sanxia",
+      "city": "新北市",
+      "name": "三峽分隊",
+      "active": true
+    },
+    {
+      "id": "s-longen",
+      "city": "新北市",
+      "name": "隆恩分隊",
+      "active": true
+    },
+    {
+      "id": "s-yingge",
+      "city": "新北市",
+      "name": "鶯歌分隊",
+      "active": true
+    },
+    {
+      "id": "s-fengming",
+      "city": "新北市",
+      "name": "鳳鳴分隊",
+      "active": true
+    }
+  ],
+  "hospitals": [
+    {
+      "id": "h-tu",
+      "city": "新北市",
+      "name": "土城醫院",
+      "active": true
+    },
+    {
+      "id": "h-fy",
+      "city": "新北市",
+      "name": "亞東醫院",
+      "active": true
+    }
+  ],
+  "departments": [
+    {
+      "id": "dep-er",
+      "name": "急診醫學科",
+      "active": true
+    },
+    {
+      "id": "dep-trauma",
+      "name": "外傷科",
+      "active": true
+    },
+    {
+      "id": "dep-cardio",
+      "name": "心臟內科",
+      "active": true
+    },
+    {
+      "id": "dep-cvs",
+      "name": "心臟外科",
+      "active": true
+    },
+    {
+      "id": "dep-neuro",
+      "name": "神經內科",
+      "active": true
+    },
+    {
+      "id": "dep-other",
+      "name": "其他科",
+      "active": true
+    }
+  ],
+  "users": [
+    {
+      "id": "u-admin-chen",
+      "role": "admin",
+      "name": "陳承彬",
+      "phone": "0986994929",
+      "password": "P123070487",
+      "hospitalId": "h-tu",
+      "departmentId": "dep-er",
+      "approved": true
+    }
+  ],
+  "onDuty": [
+    {
+      "id": "od-er",
+      "userId": "u-doc-er",
+      "hospitalId": "h-tu",
+      "departmentId": "dep-er",
+      "dutyDate": "2026-07-01",
+      "active": true
+    },
+    {
+      "id": "od-cardio",
+      "userId": "u-doc-cardio",
+      "hospitalId": "h-tu",
+      "departmentId": "dep-cardio",
+      "dutyDate": "2026-07-01",
+      "active": true
+    },
+    {
+      "id": "od-trauma",
+      "userId": "u-doc-trauma",
+      "hospitalId": "h-tu",
+      "departmentId": "dep-trauma",
+      "dutyDate": "2026-07-01",
+      "active": true
+    },
+    {
+      "id": "od-neuro",
+      "userId": "u-doc-neuro",
+      "hospitalId": "h-fy",
+      "departmentId": "dep-neuro",
+      "dutyDate": "2026-07-01",
+      "active": true
+    },
+    {
+      "id": "od-cvs",
+      "userId": "u-doc-cvs",
+      "hospitalId": "h-tu",
+      "departmentId": "dep-cvs",
+      "dutyDate": "2026-07-01",
+      "active": true
+    }
+  ],
+  "alertTypes": [
+    {
+      "id": "stemi",
+      "name": "STEMI",
+      "routeDepartments": [
+        "dep-er",
+        "dep-cardio"
+      ],
+      "active": true,
+      "prompt": "拍攝 12 導程 EKG 後，送至後送醫院當班急診科醫師與心臟內科醫師。"
+    },
+    {
+      "id": "ecmo",
+      "name": "ECMO",
+      "routeDepartments": [
+        "dep-er",
+        "dep-cvs"
+      ],
+      "active": true,
+      "prompt": "請通報後送醫院急診醫學科醫師與心臟外科醫師。"
+    },
+    {
+      "id": "trauma",
+      "name": "重大創傷",
+      "routeDepartments": [
+        "dep-er",
+        "dep-trauma"
+      ],
+      "active": true,
+      "prompt": "請通報後送醫院急診醫學科醫師與外傷科醫師。"
+    },
+    {
+      "id": "stroke",
+      "name": "急性腦梗塞",
+      "routeDepartments": [
+        "dep-er",
+        "dep-neuro"
+      ],
+      "active": true,
+      "prompt": "請通報後送醫院急診醫學科醫師與神經內科醫師。"
+    }
+  ],
+  "alerts": []
+}

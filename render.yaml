@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: prehospital-critical-alert-test
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prehospital-critical-alert-db
+          property: connectionString
+
+databases:
+  - name: prehospital-critical-alert-db
+    databaseName: prehospital_alert
+    plan: free

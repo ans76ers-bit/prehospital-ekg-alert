@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#102632"/>
+  <rect x="76" y="106" width="360" height="300" rx="28" fill="#f5f7f9"/>
+  <path d="M92 256h78l28-72 44 148 40-112 26 36h112" fill="none" stroke="#0d766e" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="378" cy="142" r="34" fill="#bc3b3b"/>
+  <text x="256" y="378" text-anchor="middle" font-family="Arial, sans-serif" font-size="58" font-weight="700" fill="#102632">EMS</text>
+</svg>
