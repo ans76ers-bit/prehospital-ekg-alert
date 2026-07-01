@@ -266,6 +266,12 @@ function activeDepartments() {
   return state.departments.filter((item) => item.active);
 }
 
+function hospitalDoctors() {
+  return state.users
+    .filter((user) => user.role === "hospital" && user.approved)
+    .sort((a, b) => `${hospitalName(a.hospitalId)}${departmentName(a.departmentId)}${a.name}`.localeCompare(`${hospitalName(b.hospitalId)}${departmentName(b.departmentId)}${b.name}`, "zh-Hant"));
+}
+
 function timeToMinutes(value) {
   const match = /^(\d{2}):(\d{2})$/.exec(value || "");
   if (!match) return null;
@@ -871,6 +877,12 @@ function renderAdmin() {
       <section class="panel">
         <h2>當班人員與班表匯入</h2>
         <form id="manualDutyForm" class="grid three">
+          <label>選擇既有醫師
+            <select name="existingDoctorId">
+              <option value="">新增醫師或手動輸入</option>
+              ${hospitalDoctors().map((doctor) => `<option value="${doctor.id}">${doctor.name} / ${hospitalName(doctor.hospitalId)} / ${departmentName(doctor.departmentId)}</option>`).join("")}
+            </select>
+          </label>
           <label>醫師姓名<input name="name" required placeholder="請輸入醫師姓名" /></label>
           <label>聯絡電話 / 登入帳號<input name="phone" required inputmode="tel" placeholder="例如 0912345678" /></label>
           <label>醫院
@@ -885,7 +897,7 @@ function renderAdmin() {
           <label>結束時間<input name="dutyEnd" type="time" value="17:00" /></label>
           <button type="submit">手動加入當班</button>
         </form>
-        <div class="notice">手動輸入可直接建立醫師與當班時段；若填寫「新增其他醫院」，系統會自動加入醫院清單。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
+        <div class="notice">可選擇既有醫師自動帶入資料，再只調整值班日期與時間；若填寫「新增其他醫院」，系統會自動加入醫院清單。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
         <label>CSV 匯入<textarea id="scheduleCsv">${sampleCsv()}</textarea></label>
         <label>AI 輔助判讀 Excel<input id="excelSchedule" type="file" accept=".xlsx,.xls,.csv" /></label>
         <div class="notice">目前 Demo 可先上傳檔案並產生預覽區；正式版會將 Excel 送到後端/AI 解析後，再由管理者確認匯入。</div>
@@ -1318,6 +1330,16 @@ function bindAdmin() {
     saveState();
     render();
   }));
+  document.querySelector("#manualDutyForm [name='existingDoctorId']")?.addEventListener("change", (event) => {
+    const form = event.target.form;
+    const doctor = userById(event.target.value);
+    if (!form || !doctor) return;
+    form.elements.name.value = doctor.name || "";
+    form.elements.phone.value = doctor.phone || "";
+    form.elements.hospitalId.value = doctor.hospitalId || "";
+    form.elements.departmentId.value = doctor.departmentId || "";
+    form.elements.newHospitalName.value = "";
+  });
   document.querySelector("#manualDutyForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
@@ -1358,6 +1380,8 @@ function bindAdmin() {
       if (!user) {
         user = { id: uid("u"), role: "hospital", name: row.name, phone: row.phone, password: row.phone, hospitalId: hospital.id, departmentId: department.id, approved: true };
         state.users.push(user);
+      } else {
+        Object.assign(user, { name: row.name || user.name, hospitalId: hospital.id, departmentId: department.id, approved: true, password: user.password || user.phone });
       }
       state.onDuty.push({
         id: uid("od"),
