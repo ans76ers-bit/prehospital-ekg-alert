@@ -3,7 +3,12 @@ const SESSION_KEY = "prehospital-critical-alert-session-v2";
 const REMEMBER_KEY = "prehospital-critical-alert-remember-v1";
 const API_STATE_URL = "./api/state";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const dateKey = (date = new Date()) => {
+  const local = new Date(date);
+  local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
+  return local.toISOString().slice(0, 10);
+};
+const today = () => dateKey();
 const nowText = () => new Date().toLocaleString("zh-TW", { hour12: false });
 const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`;
 
@@ -272,13 +277,24 @@ function dutyTimeText(duty) {
   return `${duty.dutyDate} ${duty.dutyStart || "00:00"}-${duty.dutyEnd || "23:59"}`;
 }
 
+function addDays(dateValue, days) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return dateKey(date);
+}
+
 function isDutyActiveNow(duty) {
-  if (!duty.active || duty.dutyDate !== today()) return false;
+  if (!duty.active) return false;
   const start = timeToMinutes(duty.dutyStart);
   const end = timeToMinutes(duty.dutyEnd);
-  if (start === null && end === null) return true;
+  const currentDate = today();
+  if (start === null && end === null) return duty.dutyDate === currentDate;
   const now = new Date();
   const current = now.getHours() * 60 + now.getMinutes();
+  if (start !== null && end !== null && start > end) {
+    return (duty.dutyDate === currentDate && current >= start) || (addDays(duty.dutyDate, 1) === currentDate && current <= end);
+  }
+  if (duty.dutyDate !== currentDate) return false;
   if (start !== null && current < start) return false;
   if (end !== null && current > end) return false;
   return true;
@@ -869,12 +885,7 @@ function renderAdmin() {
           <label>結束時間<input name="dutyEnd" type="time" value="17:00" /></label>
           <button type="submit">手動加入當班</button>
         </form>
-        <div class="notice">手動輸入可直接建立醫師與當班時段；若填寫「新增其他醫院」，系統會自動加入醫院清單。</div>
-        <form id="dutyForm" class="grid three">
-          <label>醫師<select name="userId">${state.users.filter((u) => u.role === "hospital").map((u) => `<option value="${u.id}">${u.name} / ${departmentName(u.departmentId)}</option>`).join("")}</select></label>
-          <label>日期<input name="dutyDate" type="date" value="${today()}" /></label>
-          <button type="submit">加入當班</button>
-        </form>
+        <div class="notice">手動輸入可直接建立醫師與當班時段；若填寫「新增其他醫院」，系統會自動加入醫院清單。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
         <label>CSV 匯入<textarea id="scheduleCsv">${sampleCsv()}</textarea></label>
         <label>AI 輔助判讀 Excel<input id="excelSchedule" type="file" accept=".xlsx,.xls,.csv" /></label>
         <div class="notice">目前 Demo 可先上傳檔案並產生預覽區；正式版會將 Excel 送到後端/AI 解析後，再由管理者確認匯入。</div>
@@ -1332,14 +1343,6 @@ function bindAdmin() {
     saveState();
     render();
   });
-  document.querySelector("#dutyForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-    const user = userById(data.userId);
-    state.onDuty.push({ id: uid("od"), userId: user.id, hospitalId: user.hospitalId, departmentId: user.departmentId, dutyDate: data.dutyDate, active: true });
-    saveState();
-    render();
-  });
   document.querySelectorAll(".toggle-duty").forEach((button) => button.addEventListener("click", () => {
     const duty = state.onDuty.find((item) => item.id === button.dataset.id);
     duty.active = !duty.active;
@@ -1383,7 +1386,8 @@ function sampleCsv() {
 土城醫院,急診醫學科,陳承彬,0986994929,${today()},08:00,17:00
 土城醫院,心臟內科,請填姓名,請填手機,${today()},08:00,17:00
 土城醫院,心臟外科,請填姓名,請填手機,${today()},17:00,23:00
-亞東醫院,急診醫學科,請填姓名,請填手機,${today()},08:00,17:00`;
+亞東醫院,急診醫學科,請填姓名,請填手機,${today()},08:00,17:00
+亞東醫院,急診醫學科,夜班醫師,請填手機,${today()},20:00,08:00`;
 }
 
 function parseCsv(text) {
