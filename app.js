@@ -439,15 +439,14 @@ function renderLogin() {
       <form class="login-panel" id="loginForm">
         <div class="login-title">
           <h1>登入</h1>
-          <p>測試版管理者：陳承彬 0986994929。</p>
+          <p>請輸入管理者核發或註冊核准後的帳號密碼。</p>
           <p class="small">登入後會保持登入狀態，直到你主動按「登出」。</p>
         </div>
-        <label>電話號碼<input name="phone" required value="0986994929" /></label>
-        <label>密碼<input name="password" type="password" required value="P123070487" /></label>
+        <label>電話號碼<input name="phone" required autocomplete="username" /></label>
+        <label>密碼<input name="password" type="password" required autocomplete="current-password" /></label>
         <div class="actions">
           <button type="submit">登入</button>
           <button type="button" class="secondary public-action" data-view="home">返回</button>
-          <button type="button" class="ghost" id="resetDemo">重置 Demo 資料</button>
         </div>
       </form>
     </section>
@@ -953,15 +952,6 @@ function bindPublic() {
     view = button.dataset.view;
     render();
   }));
-  document.querySelector("#resetDemo")?.addEventListener("click", () => {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(SESSION_KEY);
-    state = structuredClone(seed);
-    session = null;
-    saveState();
-    view = "home";
-    render();
-  });
   document.querySelector("#loginForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
