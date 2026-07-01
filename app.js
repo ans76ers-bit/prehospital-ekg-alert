@@ -261,6 +261,64 @@ function activeDepartments() {
   return state.departments.filter((item) => item.active);
 }
 
+function timeToMinutes(value) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value || "");
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function dutyTimeText(duty) {
+  if (!duty.dutyStart && !duty.dutyEnd) return `${duty.dutyDate} 全天`;
+  return `${duty.dutyDate} ${duty.dutyStart || "00:00"}-${duty.dutyEnd || "23:59"}`;
+}
+
+function isDutyActiveNow(duty) {
+  if (!duty.active || duty.dutyDate !== today()) return false;
+  const start = timeToMinutes(duty.dutyStart);
+  const end = timeToMinutes(duty.dutyEnd);
+  if (start === null && end === null) return true;
+  const now = new Date();
+  const current = now.getHours() * 60 + now.getMinutes();
+  if (start !== null && current < start) return false;
+  if (end !== null && current > end) return false;
+  return true;
+}
+
+function findOrCreateHospital({ hospitalId, newHospitalName }) {
+  const name = (newHospitalName || "").trim();
+  if (name) {
+    let hospital = state.hospitals.find((item) => item.name === name);
+    if (!hospital) {
+      hospital = { id: uid("h"), city: "新北市", name, active: true };
+      state.hospitals.push(hospital);
+    }
+    return hospital;
+  }
+  return state.hospitals.find((item) => item.id === hospitalId);
+}
+
+function findOrCreateDoctor({ name, phone, hospitalId, departmentId }) {
+  const cleanName = name.trim();
+  const cleanPhone = phone.trim();
+  let user = state.users.find((item) => item.role === "hospital" && item.phone === cleanPhone);
+  if (!user) {
+    user = {
+      id: uid("u"),
+      role: "hospital",
+      name: cleanName,
+      phone: cleanPhone,
+      password: cleanPhone,
+      hospitalId,
+      departmentId,
+      approved: true,
+    };
+    state.users.push(user);
+    return user;
+  }
+  Object.assign(user, { name: cleanName, hospitalId, departmentId, approved: true, password: user.password || cleanPhone });
+  return user;
+}
+
 function sampleEkgImage() {
   const canvas = document.createElement("canvas");
   canvas.width = 1100;
@@ -310,7 +368,7 @@ function sampleEkgImage() {
 
 function recipientsFor(hospitalId, departments) {
   const validDuty = state.onDuty.filter(
-    (duty) => duty.active && duty.dutyDate === today() && duty.hospitalId === hospitalId && departments.includes(duty.departmentId),
+    (duty) => isDutyActiveNow(duty) && duty.hospitalId === hospitalId && departments.includes(duty.departmentId),
   );
   return validDuty
     .map((duty) => userById(duty.userId))
@@ -392,11 +450,16 @@ function render() {
   bindModal();
 }
 
+function isEditingField() {
+  return ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName);
+}
+
 async function pollServerState() {
+  if (!session) return;
   touchCurrentUser();
   const before = JSON.stringify(state);
   const loaded = await loadStateFromServer();
-  if (loaded && JSON.stringify(state) !== before) render();
+  if (loaded && JSON.stringify(state) !== before && !isEditingField()) render();
 }
 
 function isOnline(user) {
@@ -791,6 +854,22 @@ function renderAdmin() {
       </section>
       <section class="panel">
         <h2>當班人員與班表匯入</h2>
+        <form id="manualDutyForm" class="grid three">
+          <label>醫師姓名<input name="name" required placeholder="請輸入醫師姓名" /></label>
+          <label>聯絡電話 / 登入帳號<input name="phone" required inputmode="tel" placeholder="例如 0912345678" /></label>
+          <label>醫院
+            <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospital.name}</option>`).join("")}</select>
+          </label>
+          <label>新增其他醫院<input name="newHospitalName" placeholder="若不在清單中，填寫新醫院名稱" /></label>
+          <label>科別
+            <select name="departmentId">${activeDepartments().map((department) => `<option value="${department.id}">${department.name}</option>`).join("")}</select>
+          </label>
+          <label>值班日期<input name="dutyDate" type="date" value="${today()}" required /></label>
+          <label>開始時間<input name="dutyStart" type="time" value="08:00" /></label>
+          <label>結束時間<input name="dutyEnd" type="time" value="17:00" /></label>
+          <button type="submit">手動加入當班</button>
+        </form>
+        <div class="notice">手動輸入可直接建立醫師與當班時段；若填寫「新增其他醫院」，系統會自動加入醫院清單。</div>
         <form id="dutyForm" class="grid three">
           <label>醫師<select name="userId">${state.users.filter((u) => u.role === "hospital").map((u) => `<option value="${u.id}">${u.name} / ${departmentName(u.departmentId)}</option>`).join("")}</select></label>
           <label>日期<input name="dutyDate" type="date" value="${today()}" /></label>
@@ -960,7 +1039,7 @@ function renderDutyAdmin(duty) {
         <strong>${user?.name || "未知醫師"}</strong>
         <span class="status ${duty.active ? "done" : "pending"}">${duty.active ? "當班" : "停用"}</span>
       </div>
-      <div class="meta"><span>${hospitalName(duty.hospitalId)}</span><span>${departmentName(duty.departmentId)}</span><span>${duty.dutyDate}</span></div>
+      <div class="meta"><span>${hospitalName(duty.hospitalId)}</span><span>${departmentName(duty.departmentId)}</span><span>${dutyTimeText(duty)}</span></div>
       <button class="secondary toggle-duty" data-id="${duty.id}">${duty.active ? "停用" : "啟用"}</button>
     </article>
   `;
@@ -1228,6 +1307,31 @@ function bindAdmin() {
     saveState();
     render();
   }));
+  document.querySelector("#manualDutyForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const hospital = findOrCreateHospital(data);
+    const department = state.departments.find((item) => item.id === data.departmentId);
+    if (!hospital || !department) return alert("請確認醫院與科別設定。");
+    const user = findOrCreateDoctor({
+      name: data.name,
+      phone: data.phone,
+      hospitalId: hospital.id,
+      departmentId: department.id,
+    });
+    state.onDuty.push({
+      id: uid("od"),
+      userId: user.id,
+      hospitalId: hospital.id,
+      departmentId: department.id,
+      dutyDate: data.dutyDate || today(),
+      dutyStart: data.dutyStart || "",
+      dutyEnd: data.dutyEnd || "",
+      active: true,
+    });
+    saveState();
+    render();
+  });
   document.querySelector("#dutyForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
@@ -1252,7 +1356,16 @@ function bindAdmin() {
         user = { id: uid("u"), role: "hospital", name: row.name, phone: row.phone, password: row.phone, hospitalId: hospital.id, departmentId: department.id, approved: true };
         state.users.push(user);
       }
-      state.onDuty.push({ id: uid("od"), userId: user.id, hospitalId: hospital.id, departmentId: department.id, dutyDate: row.dutyDate || today(), active: true });
+      state.onDuty.push({
+        id: uid("od"),
+        userId: user.id,
+        hospitalId: hospital.id,
+        departmentId: department.id,
+        dutyDate: row.dutyDate || today(),
+        dutyStart: row.dutyStart || "",
+        dutyEnd: row.dutyEnd || "",
+        active: true,
+      });
     });
     saveState();
     render();
@@ -1266,11 +1379,11 @@ function bindAdmin() {
 }
 
 function sampleCsv() {
-  return `hospital,department,name,phone,dutyDate
-土城醫院,急診醫學科,陳承彬,0986994929,${today()}
-土城醫院,心臟內科,請填姓名,請填手機,${today()}
-土城醫院,心臟外科,請填姓名,請填手機,${today()}
-亞東醫院,急診醫學科,請填姓名,請填手機,${today()}`;
+  return `hospital,department,name,phone,dutyDate,dutyStart,dutyEnd
+土城醫院,急診醫學科,陳承彬,0986994929,${today()},08:00,17:00
+土城醫院,心臟內科,請填姓名,請填手機,${today()},08:00,17:00
+土城醫院,心臟外科,請填姓名,請填手機,${today()},17:00,23:00
+亞東醫院,急診醫學科,請填姓名,請填手機,${today()},08:00,17:00`;
 }
 
 function parseCsv(text) {
