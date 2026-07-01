@@ -306,41 +306,6 @@ function isDutyActiveNow(duty) {
   return true;
 }
 
-function findOrCreateHospital({ hospitalId, newHospitalName }) {
-  const name = (newHospitalName || "").trim();
-  if (name) {
-    let hospital = state.hospitals.find((item) => item.name === name);
-    if (!hospital) {
-      hospital = { id: uid("h"), city: "新北市", name, active: true };
-      state.hospitals.push(hospital);
-    }
-    return hospital;
-  }
-  return state.hospitals.find((item) => item.id === hospitalId);
-}
-
-function findOrCreateDoctor({ name, phone, hospitalId, departmentId }) {
-  const cleanName = name.trim();
-  const cleanPhone = phone.trim();
-  let user = state.users.find((item) => item.role === "hospital" && item.phone === cleanPhone);
-  if (!user) {
-    user = {
-      id: uid("u"),
-      role: "hospital",
-      name: cleanName,
-      phone: cleanPhone,
-      password: cleanPhone,
-      hospitalId,
-      departmentId,
-      approved: true,
-    };
-    state.users.push(user);
-    return user;
-  }
-  Object.assign(user, { name: cleanName, hospitalId, departmentId, approved: true, password: user.password || cleanPhone });
-  return user;
-}
-
 function sampleEkgImage() {
   const canvas = document.createElement("canvas");
   canvas.width = 1100;
@@ -876,28 +841,20 @@ function renderAdmin() {
       </section>
       <section class="panel">
         <h2>當班人員與班表匯入</h2>
+        ${hospitalDoctors().length ? "" : `<div class="notice">目前沒有已核准的院後端醫師。請先讓醫師註冊院後端帳號，或在帳號管理中核准後再排班。</div>`}
         <form id="manualDutyForm" class="grid three">
-          <label>選擇既有醫師
-            <select name="existingDoctorId">
-              <option value="">新增醫師或手動輸入</option>
+          <label>院後端醫師
+            <select name="userId" required>
+              <option value="">請選擇已註冊醫師</option>
               ${hospitalDoctors().map((doctor) => `<option value="${doctor.id}">${doctor.name} / ${hospitalName(doctor.hospitalId)} / ${departmentName(doctor.departmentId)}</option>`).join("")}
             </select>
-          </label>
-          <label>醫師姓名<input name="name" required placeholder="請輸入醫師姓名" /></label>
-          <label>聯絡電話 / 登入帳號<input name="phone" required inputmode="tel" placeholder="例如 0912345678" /></label>
-          <label>醫院
-            <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospital.name}</option>`).join("")}</select>
-          </label>
-          <label>新增其他醫院<input name="newHospitalName" placeholder="若不在清單中，填寫新醫院名稱" /></label>
-          <label>科別
-            <select name="departmentId">${activeDepartments().map((department) => `<option value="${department.id}">${department.name}</option>`).join("")}</select>
           </label>
           <label>值班日期<input name="dutyDate" type="date" value="${today()}" required /></label>
           <label>開始時間<input name="dutyStart" type="time" value="08:00" /></label>
           <label>結束時間<input name="dutyEnd" type="time" value="17:00" /></label>
-          <button type="submit">手動加入當班</button>
+          <button type="submit">加入值班</button>
         </form>
-        <div class="notice">可選擇既有醫師自動帶入資料，再只調整值班日期與時間；若填寫「新增其他醫院」，系統會自動加入醫院清單。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
+        <div class="notice">排班只從已核准的院後端醫師帳號選取；醫院與科別會沿用該醫師帳號資料。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
         <label>CSV 匯入<textarea id="scheduleCsv">${sampleCsv()}</textarea></label>
         <label>AI 輔助判讀 Excel<input id="excelSchedule" type="file" accept=".xlsx,.xls,.csv" /></label>
         <div class="notice">目前 Demo 可先上傳檔案並產生預覽區；正式版會將 Excel 送到後端/AI 解析後，再由管理者確認匯入。</div>
@@ -1330,33 +1287,16 @@ function bindAdmin() {
     saveState();
     render();
   }));
-  document.querySelector("#manualDutyForm [name='existingDoctorId']")?.addEventListener("change", (event) => {
-    const form = event.target.form;
-    const doctor = userById(event.target.value);
-    if (!form || !doctor) return;
-    form.elements.name.value = doctor.name || "";
-    form.elements.phone.value = doctor.phone || "";
-    form.elements.hospitalId.value = doctor.hospitalId || "";
-    form.elements.departmentId.value = doctor.departmentId || "";
-    form.elements.newHospitalName.value = "";
-  });
   document.querySelector("#manualDutyForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-    const hospital = findOrCreateHospital(data);
-    const department = state.departments.find((item) => item.id === data.departmentId);
-    if (!hospital || !department) return alert("請確認醫院與科別設定。");
-    const user = findOrCreateDoctor({
-      name: data.name,
-      phone: data.phone,
-      hospitalId: hospital.id,
-      departmentId: department.id,
-    });
+    const user = userById(data.userId);
+    if (!user || user.role !== "hospital" || !user.approved) return alert("請選擇已核准的院後端醫師。");
     state.onDuty.push({
       id: uid("od"),
       userId: user.id,
-      hospitalId: hospital.id,
-      departmentId: department.id,
+      hospitalId: user.hospitalId,
+      departmentId: user.departmentId,
       dutyDate: data.dutyDate || today(),
       dutyStart: data.dutyStart || "",
       dutyEnd: data.dutyEnd || "",
