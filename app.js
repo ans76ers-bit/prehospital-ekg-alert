@@ -39,6 +39,7 @@ const seed = {
       name: "陳承彬",
       phone: "0986994929",
       password: "P123070487",
+      stationId: "s-tucheng",
       hospitalId: "h-tu",
       departmentId: "dep-er",
       approved: true,
@@ -106,7 +107,7 @@ function migrateState(current) {
     .map((user) => ({
       ...user,
       password: user.password || user.phone,
-      stationId: user.stationId === "s-banqiao" ? "s-tucheng" : user.stationId,
+      stationId: user.stationId === "s-banqiao" ? "s-tucheng" : user.role === "admin" && !user.stationId ? "s-tucheng" : user.stationId,
     }));
   next.onDuty = current.onDuty || [];
   next.alerts = (current.alerts || []).map((alert) => ({
@@ -382,9 +383,12 @@ function render() {
   document.querySelector("#app").innerHTML = session ? renderShell() : renderPublic();
   bindCommon();
   if (!session) bindPublic();
-  if (session?.role === "prehospital") bindPrehospital();
-  if (session?.role === "hospital") bindHospitalUser();
-  if (session?.role === "admin") bindAdmin();
+  if (session?.role === "prehospital" || (session?.role === "admin" && ["adminPrehospital", "alert"].includes(view))) bindPrehospital();
+  if (session?.role === "hospital" || (session?.role === "admin" && view === "adminHospital")) bindHospitalUser();
+  if (session?.role === "admin") {
+    bindAdmin();
+    bindAdminModeSwitch();
+  }
   bindModal();
 }
 
@@ -497,7 +501,7 @@ function renderShell() {
           <div class="brand-mark">EMS</div>
           <div>
             <h1>院前 EKG 與急重症通報</h1>
-            <small>${roleLabel(session.role)} Demo</small>
+            <small>${session.role === "admin" ? `管理者 / ${adminModeLabel()}` : `${roleLabel(session.role)} Demo`}</small>
           </div>
         </div>
         <div class="userbar">
@@ -506,6 +510,7 @@ function renderShell() {
           <button class="secondary" id="logout">登出</button>
         </div>
       </header>
+      ${session.role === "admin" ? renderAdminModeTabs() : ""}
       <main class="page">${renderDashboard()}</main>
       ${selectedAlertId ? renderAlertModal(selectedAlertId) : ""}
     </div>
@@ -516,9 +521,33 @@ function roleLabel(role) {
   return { admin: "管理者", prehospital: "院前端", hospital: "院後端" }[role] || role;
 }
 
+function adminModeLabel() {
+  return {
+    adminPrehospital: "院前端測試",
+    adminHospital: "院後端測試",
+    alert: "院前端測試",
+    dashboard: "管理頁面",
+  }[view] || "管理頁面";
+}
+
+function renderAdminModeTabs() {
+  return `
+    <nav class="tabs admin-tabs">
+      <button type="button" class="${view === "adminPrehospital" || view === "alert" ? "active" : ""}" data-admin-view="adminPrehospital">院前端測試</button>
+      <button type="button" class="${view === "adminHospital" ? "active" : ""}" data-admin-view="adminHospital">院後端測試</button>
+      <button type="button" class="${!["adminPrehospital", "adminHospital", "alert", "profile"].includes(view) ? "active" : ""}" data-admin-view="dashboard">管理頁面</button>
+    </nav>
+  `;
+}
+
 function renderDashboard() {
   if (view === "profile") return renderProfile();
-  if (session.role === "admin") return renderAdmin();
+  if (session.role === "admin") {
+    if (view === "adminPrehospital") return renderPrehospitalHome();
+    if (view === "adminHospital") return renderHospitalUser();
+    if (view === "alert") return renderAlertComposer();
+    return renderAdmin();
+  }
   if (session.role === "hospital") return renderHospitalUser();
   return view === "alert" ? renderAlertComposer() : renderPrehospitalHome();
 }
@@ -552,7 +581,7 @@ function renderProfile() {
         <label>姓名<input name="name" required value="${escapeHtml(session.name)}" /></label>
         <label>電話號碼<input name="phone" required value="${escapeHtml(session.phone)}" /></label>
         <label>密碼<input name="password" type="password" required value="${escapeHtml(session.password || session.phone)}" /></label>
-        ${session.role === "prehospital" ? `
+        ${session.role === "prehospital" || session.role === "admin" ? `
           <label>所屬分隊
             <select name="stationId">${activeStations().map((station) => `<option value="${station.id}" ${station.id === session.stationId ? "selected" : ""}>${station.city} ${station.name}</option>`).join("")}</select>
           </label>
@@ -688,10 +717,7 @@ function renderAlertCard(alert) {
 }
 
 function renderHospitalUser() {
-  const relevant = state.alerts
-    .filter((alert) => alert.recipients.some((recipient) => recipient.userId === session.id))
-    .slice()
-    .reverse();
+  const relevant = hospitalRelevantAlerts().slice().reverse();
   const ringing = relevant.some((alert) => alert.status === "notified");
   if (ringing) startAlarm();
   return `
@@ -710,6 +736,15 @@ function renderHospitalUser() {
       </section>
     </section>
   `;
+}
+
+function hospitalRelevantAlerts() {
+  return state.alerts.filter((alert) => {
+    if (alert.recipients.some((recipient) => recipient.userId === session.id)) return true;
+    if (session.role !== "admin") return false;
+    const type = alertType(alert.typeId);
+    return alert.hospitalId === session.hospitalId && type?.routeDepartments.includes(session.departmentId);
+  });
 }
 
 function renderHospitalAlert(alert) {
@@ -1008,7 +1043,7 @@ function bindCommon() {
     user.name = data.name;
     user.phone = data.phone;
     user.password = data.password || data.phone;
-    if (user.role === "prehospital") user.stationId = data.stationId;
+    if (user.role === "prehospital" || user.role === "admin") user.stationId = data.stationId;
     if (user.role === "hospital" || user.role === "admin") {
       user.hospitalId = data.hospitalId;
       user.departmentId = data.departmentId;
@@ -1032,13 +1067,22 @@ function bindCommon() {
   }));
 }
 
+function bindAdminModeSwitch() {
+  document.querySelectorAll("[data-admin-view]").forEach((button) => button.addEventListener("click", () => {
+    view = button.dataset.adminView;
+    uploadImage = "";
+    stopAlarm();
+    render();
+  }));
+}
+
 function bindPrehospital() {
   document.querySelector("#startAlert")?.addEventListener("click", () => {
     view = "alert";
     render();
   });
   document.querySelector("#backDashboard")?.addEventListener("click", () => {
-    view = "dashboard";
+    view = session.role === "admin" ? "adminPrehospital" : "dashboard";
     uploadImage = "";
     render();
   });
@@ -1065,7 +1109,7 @@ function bindPrehospital() {
     const extra = buildExtra(data, type);
     createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: data.typeId === "stemi" ? uploadImage : "" });
     uploadImage = "";
-    view = "dashboard";
+    view = session.role === "admin" ? "adminPrehospital" : "dashboard";
     render();
   });
 }
@@ -1271,11 +1315,11 @@ function startAlarm() {
 }
 
 function stopAlarmIfNotNeeded() {
-  if (session?.role !== "hospital") {
+  if (!(session?.role === "hospital" || (session?.role === "admin" && view === "adminHospital"))) {
     stopAlarm();
     return;
   }
-  const hasPending = state.alerts.some((alert) => alert.status === "notified" && alert.recipients.some((recipient) => recipient.userId === session.id));
+  const hasPending = hospitalRelevantAlerts().some((alert) => alert.status === "notified");
   if (!hasPending) stopAlarm();
 }
 

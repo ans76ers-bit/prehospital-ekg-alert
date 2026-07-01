@@ -215,6 +215,12 @@ label {
   color: var(--ink);
 }
 
+.admin-tabs {
+  margin: 16px auto 0;
+  max-width: 1180px;
+  width: calc(100% - 48px);
+}
+
 .grid {
   display: grid;
   gap: 16px;

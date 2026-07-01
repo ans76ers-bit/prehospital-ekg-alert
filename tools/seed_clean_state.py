@@ -39,6 +39,7 @@ def main():
                 "name": "陳承彬",
                 "phone": "0986994929",
                 "password": "P123070487",
+                "stationId": "s-tucheng",
                 "hospitalId": "h-tu",
                 "departmentId": "dep-er",
                 "approved": True,
