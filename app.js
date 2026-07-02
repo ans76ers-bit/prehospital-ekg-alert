@@ -93,6 +93,7 @@ let selectedAlertId = "";
 let audio = { context: null, oscillator: null, timer: null };
 let pendingDeletedUserIds = [];
 let pendingDeletedDutyIds = [];
+let pendingCanceledAlertIds = [];
 let authMessage = "";
 let dutyRosterDate = today();
 let dutyHospitalFilter = "all";
@@ -180,6 +181,16 @@ function saveState() {
   syncStateToServer();
 }
 
+function applyPendingCanceledAlerts() {
+  if (!pendingCanceledAlertIds.length) return;
+  state.alerts.forEach((alert) => {
+    if (!pendingCanceledAlertIds.includes(alert.id)) return;
+    alert.status = "canceled";
+    alert.canceledBy = alert.canceledBy || session?.id || "";
+    alert.canceledAt = alert.canceledAt || nowText();
+  });
+}
+
 async function loadStateFromServer() {
   try {
     const response = await fetch(API_STATE_URL, { cache: "no-store" });
@@ -190,6 +201,7 @@ async function loadStateFromServer() {
       return false;
     }
     state = migrateState({ ...structuredClone(seed), ...payload.state });
+    applyPendingCanceledAlerts();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     refreshSessionFromState();
     return true;
@@ -212,6 +224,9 @@ async function syncStateToServer() {
     }
     if (response.ok && deletedDutyIds.length) {
       pendingDeletedDutyIds = pendingDeletedDutyIds.filter((id) => !deletedDutyIds.includes(id));
+    }
+    if (response.ok && pendingCanceledAlertIds.length) {
+      pendingCanceledAlertIds = pendingCanceledAlertIds.filter((id) => !state.alerts.some((alert) => alert.id === id && alert.status === "canceled"));
     }
   } catch {}
 }
@@ -1394,6 +1409,7 @@ function bindCommon() {
     item.status = "canceled";
     item.canceledBy = session.id;
     item.canceledAt = nowText();
+    if (!pendingCanceledAlertIds.includes(item.id)) pendingCanceledAlertIds.push(item.id);
     item.audit.push(`${nowText()} ${session.name} 取消通報`);
     saveState();
     render();

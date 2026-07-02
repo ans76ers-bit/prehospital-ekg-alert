@@ -8,6 +8,26 @@ DATA_FILE = Path(os.environ.get("APP_STATE_FILE", ROOT / "data" / "app_state.jso
 DATABASE_URL = os.environ.get("DATABASE_URL")
 DEMO_USER_IDS = {"u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"}
 DEMO_PHONES = {"0900000000", "0911000001", "0912000001", "0912000002", "0912000003", "0912000004", "0912000005"}
+ALERT_STATUS_RANK = {
+    "no-duty": 0,
+    "notified": 0,
+    "accepted": 1,
+    "canceled": 2,
+    "activated": 3,
+    "declined": 3,
+    "callback": 3,
+}
+ALERT_PROGRESS_FIELDS = {
+    "status",
+    "acceptedBy",
+    "acceptedAt",
+    "response",
+    "responseNote",
+    "respondedBy",
+    "respondedAt",
+    "canceledBy",
+    "canceledAt",
+}
 
 
 def sanitize_state(payload):
@@ -52,6 +72,28 @@ def merge_list_by_id(existing_items, incoming_items, deleted_ids=None):
     return list(merged.values())
 
 
+def merge_alerts_by_id(existing_items, incoming_items):
+    merged = {item.get("id"): item for item in existing_items or [] if item.get("id")}
+    for item in incoming_items or []:
+        item_id = item.get("id")
+        if not item_id:
+            continue
+        existing = merged.get(item_id, {})
+        next_item = {**existing, **item}
+        existing_rank = ALERT_STATUS_RANK.get(existing.get("status"), 0)
+        incoming_rank = ALERT_STATUS_RANK.get(item.get("status"), 0)
+        if existing and incoming_rank < existing_rank:
+            for field in ALERT_PROGRESS_FIELDS:
+                if field in existing:
+                    next_item[field] = existing[field]
+        existing_audit = existing.get("audit") if isinstance(existing.get("audit"), list) else []
+        incoming_audit = item.get("audit") if isinstance(item.get("audit"), list) else []
+        if existing_audit or incoming_audit:
+            next_item["audit"] = list(dict.fromkeys([*existing_audit, *incoming_audit]))
+        merged[item_id] = next_item
+    return list(merged.values())
+
+
 def merge_state(existing_state, incoming_state, deleted_user_ids=None, deleted_duty_ids=None):
     if not isinstance(existing_state, dict):
         return incoming_state
@@ -64,8 +106,9 @@ def merge_state(existing_state, incoming_state, deleted_user_ids=None, deleted_d
         for duty in merge_list_by_id(existing_state.get("onDuty", []), incoming_state.get("onDuty", []), deleted_duty_ids)
         if duty.get("userId") not in set(deleted_user_ids or [])
     ]
-    for key in ("stations", "hospitals", "departments", "alertTypes", "alerts"):
+    for key in ("stations", "hospitals", "departments", "alertTypes"):
         merged[key] = merge_list_by_id(existing_state.get(key, []), incoming_state.get(key, []))
+    merged["alerts"] = merge_alerts_by_id(existing_state.get("alerts", []), incoming_state.get("alerts", []))
     return merged
 
 
