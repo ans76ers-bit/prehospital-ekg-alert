@@ -91,6 +91,7 @@ let adminPage = "overview";
 let uploadImage = "";
 let selectedAlertId = "";
 let audio = { context: null, oscillator: null, timer: null };
+let pendingDeletedUserIds = [];
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -193,11 +194,15 @@ async function loadStateFromServer() {
 
 async function syncStateToServer() {
   try {
-    await fetch(API_STATE_URL, {
+    const deletedUserIds = [...pendingDeletedUserIds];
+    const response = await fetch(API_STATE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state }),
+      body: JSON.stringify({ state, deletedUserIds }),
     });
+    if (response.ok && deletedUserIds.length) {
+      pendingDeletedUserIds = pendingDeletedUserIds.filter((id) => !deletedUserIds.includes(id));
+    }
   } catch {}
 }
 
@@ -1388,6 +1393,7 @@ function bindAdmin() {
     const user = userById(button.dataset.id);
     if (!user) return;
     if (!confirm(`確定要刪除「${user.name}」這個帳號嗎？此動作會移除帳號與相關值班資料。`)) return;
+    pendingDeletedUserIds.push(user.id);
     state.users = state.users.filter((item) => item.id !== user.id);
     state.onDuty = state.onDuty.filter((duty) => duty.userId !== user.id);
     if (session?.id === user.id) {

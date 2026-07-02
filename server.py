@@ -41,12 +41,55 @@ def sanitize_state(payload):
     return state
 
 
+def merge_list_by_id(existing_items, incoming_items, deleted_ids=None):
+    deleted_ids = set(deleted_ids or [])
+    merged = {item.get("id"): item for item in existing_items or [] if item.get("id") and item.get("id") not in deleted_ids}
+    for item in incoming_items or []:
+        item_id = item.get("id")
+        if not item_id or item_id in deleted_ids:
+            continue
+        merged[item_id] = {**merged.get(item_id, {}), **item}
+    return list(merged.values())
+
+
+def merge_state(existing_state, incoming_state, deleted_user_ids=None):
+    if not isinstance(existing_state, dict):
+        return incoming_state
+    if not isinstance(incoming_state, dict):
+        return existing_state
+    merged = {**existing_state, **incoming_state}
+    merged["users"] = merge_list_by_id(existing_state.get("users", []), incoming_state.get("users", []), deleted_user_ids)
+    merged["onDuty"] = [
+        duty
+        for duty in merge_list_by_id(existing_state.get("onDuty", []), incoming_state.get("onDuty", []))
+        if duty.get("userId") not in set(deleted_user_ids or [])
+    ]
+    for key in ("stations", "hospitals", "departments", "alertTypes", "alerts"):
+        merged[key] = merge_list_by_id(existing_state.get(key, []), incoming_state.get(key, []))
+    return merged
+
+
 def db_connect():
     if not DATABASE_URL:
         return None
     import psycopg
 
     return psycopg.connect(DATABASE_URL)
+
+
+def read_persisted_state():
+    if DATABASE_URL:
+        with db_connect() as conn:
+            ensure_db(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT state FROM app_state WHERE id = %s", ("main",))
+                row = cur.fetchone()
+                if row:
+                    return json.loads(row[0])
+        return None
+    if not DATA_FILE.exists():
+        return None
+    return json.loads(DATA_FILE.read_text(encoding="utf-8"))
 
 
 def ensure_db(conn):
@@ -64,25 +107,20 @@ def ensure_db(conn):
 
 
 def read_state():
-    if DATABASE_URL:
-        with db_connect() as conn:
-            ensure_db(conn)
-            with conn.cursor() as cur:
-                cur.execute("SELECT state FROM app_state WHERE id = %s", ("main",))
-                row = cur.fetchone()
-                if row:
-                    return json.loads(row[0])
-            if DATA_FILE.exists():
-                state = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-                write_state(state)
-                return state
-            return None
-    if not DATA_FILE.exists():
-        return None
-    return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    state = read_persisted_state()
+    if state:
+        return state
+    if DATABASE_URL and DATA_FILE.exists():
+        state = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+        write_state(state)
+        return state
+    return None
 
 
-def write_state(state):
+def write_state(state, deleted_user_ids=None):
+    current = read_persisted_state() if deleted_user_ids or DATABASE_URL or DATA_FILE.exists() else None
+    if current:
+        state = merge_state(current, state, deleted_user_ids)
     if DATABASE_URL:
         with db_connect() as conn:
             ensure_db(conn)
@@ -135,7 +173,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                write_state(sanitize_state(payload))
+                write_state(sanitize_state(payload), payload.get("deletedUserIds", []))
                 self._send_json({"ok": True})
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
