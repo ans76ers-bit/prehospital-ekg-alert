@@ -293,8 +293,10 @@ function timeToMinutes(value) {
 }
 
 function dutyTimeText(duty) {
-  if (!duty.dutyStart && !duty.dutyEnd) return `${duty.dutyDate} 全天`;
-  return `${duty.dutyDate} ${timeLabel(duty.dutyStart || "00:00")} - ${timeLabel(duty.dutyEnd || "23:59")}`;
+  const startDate = duty.dutyDate || today();
+  const endDate = duty.dutyEndDate || startDate;
+  if (!duty.dutyStart && !duty.dutyEnd) return `${startDate} 全天`;
+  return `${startDate} ${timeLabel(duty.dutyStart || "00:00")} - ${endDate} ${timeLabel(duty.dutyEnd || "23:59")}`;
 }
 
 function timeLabel(value) {
@@ -324,20 +326,30 @@ function addDays(dateValue, days) {
   return dateKey(date);
 }
 
+function dutyEndDate(duty) {
+  if (duty.dutyEndDate) return duty.dutyEndDate;
+  const start = timeToMinutes(duty.dutyStart);
+  const end = timeToMinutes(duty.dutyEnd);
+  if (start !== null && end !== null && start > end) return addDays(duty.dutyDate, 1);
+  return duty.dutyDate;
+}
+
+function dutyIntersectsDate(duty, dateValue) {
+  return duty.dutyDate <= dateValue && dutyEndDate(duty) >= dateValue;
+}
+
 function isDutyActiveNow(duty) {
   if (!duty.active) return false;
+  const endDate = dutyEndDate(duty);
   const start = timeToMinutes(duty.dutyStart);
   const end = timeToMinutes(duty.dutyEnd);
   const currentDate = today();
-  if (start === null && end === null) return duty.dutyDate === currentDate;
+  if (start === null && end === null) return dutyIntersectsDate(duty, currentDate);
   const now = new Date();
   const current = now.getHours() * 60 + now.getMinutes();
-  if (start !== null && end !== null && start > end) {
-    return (duty.dutyDate === currentDate && current >= start) || (addDays(duty.dutyDate, 1) === currentDate && current <= end);
-  }
-  if (duty.dutyDate !== currentDate) return false;
-  if (start !== null && current < start) return false;
-  if (end !== null && current > end) return false;
+  if (currentDate < duty.dutyDate || currentDate > endDate) return false;
+  if (currentDate === duty.dutyDate && start !== null && current < start) return false;
+  if (currentDate === endDate && end !== null && current > end) return false;
   return true;
 }
 
@@ -970,12 +982,13 @@ function renderDutyPanel() {
             ${hospitalDoctors().map((doctor) => `<option value="${doctor.id}">${doctor.name} / ${hospitalName(doctor.hospitalId)} / ${departmentName(doctor.departmentId)}</option>`).join("")}
           </select>
         </label>
-        <label>值班日期<input name="dutyDate" type="date" value="${today()}" required /></label>
+        <label>開始日期<input name="dutyDate" type="date" value="${today()}" required /></label>
         <label>開始時間<select name="dutyStart">${timeOptions("08:00")}</select></label>
+        <label>結束日期<input name="dutyEndDate" type="date" value="${today()}" required /></label>
         <label>結束時間<select name="dutyEnd">${timeOptions("17:00")}</select></label>
         <button type="submit">加入值班</button>
       </form>
-      <div class="notice">排班只從已核准的院後端醫師帳號選取；醫院與科別會沿用該醫師帳號資料。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
+      <div class="notice">排班只從已核准的院後端醫師帳號選取；醫院與科別會沿用該醫師帳號資料。跨午夜班請把結束日期選到隔天，例如今天下午 08:00 到明天上午 08:00。</div>
       <section class="duty-roster-controls">
         <label>查看日期<input id="dutyRosterDate" type="date" value="${dutyRosterDate}" /></label>
         <label>醫院篩選<select id="dutyHospitalFilter">${hospitalOptions}</select></label>
@@ -1000,7 +1013,7 @@ function renderDutyRoster() {
 }
 
 function renderHospitalDutySection(hospital) {
-  const duties = state.onDuty.filter((duty) => duty.dutyDate === dutyRosterDate && duty.hospitalId === hospital.id);
+  const duties = state.onDuty.filter((duty) => dutyIntersectsDate(duty, dutyRosterDate) && duty.hospitalId === hospital.id);
   const activeDepartmentIds = new Set([...activeDepartments().map((department) => department.id), ...duties.map((duty) => duty.departmentId)]);
   const departments = [...activeDepartmentIds]
     .map((id) => state.departments.find((department) => department.id === id) || { id, name: departmentName(id) })
@@ -1020,7 +1033,7 @@ function renderHospitalDutySection(hospital) {
 
 function renderDepartmentDutySection(hospitalId, department) {
   const duties = state.onDuty
-    .filter((duty) => duty.dutyDate === dutyRosterDate && duty.hospitalId === hospitalId && duty.departmentId === department.id)
+    .filter((duty) => dutyIntersectsDate(duty, dutyRosterDate) && duty.hospitalId === hospitalId && duty.departmentId === department.id)
     .sort((a, b) => `${a.dutyStart || ""}${userById(a.userId)?.name || ""}`.localeCompare(`${b.dutyStart || ""}${userById(b.userId)?.name || ""}`, "zh-Hant"));
   return `
     <section class="duty-department">
@@ -1561,6 +1574,7 @@ function bindAdmin() {
       hospitalId: user.hospitalId,
       departmentId: user.departmentId,
       dutyDate: data.dutyDate || today(),
+      dutyEndDate: data.dutyEndDate || data.dutyDate || today(),
       dutyStart: data.dutyStart || "",
       dutyEnd: data.dutyEnd || "",
       active: true,
@@ -1609,6 +1623,7 @@ function bindAdmin() {
         hospitalId: hospital.id,
         departmentId: department.id,
         dutyDate: row.dutyDate || today(),
+        dutyEndDate: row.dutyEndDate || row.dutyDate || today(),
         dutyStart: row.dutyStart || "",
         dutyEnd: row.dutyEnd || "",
         active: true,
@@ -1628,12 +1643,12 @@ function bindAdmin() {
 }
 
 function sampleCsv() {
-  return `hospital,department,name,phone,dutyDate,dutyStart,dutyEnd
-土城醫院,急診醫學科,陳承彬,0986994929,${today()},08:00,17:00
-土城醫院,心臟內科,請填姓名,請填手機,${today()},08:00,17:00
-土城醫院,心臟外科,請填姓名,請填手機,${today()},17:00,23:00
-亞東醫院,急診醫學科,請填姓名,請填手機,${today()},08:00,17:00
-亞東醫院,急診醫學科,夜班醫師,請填手機,${today()},20:00,08:00`;
+  return `hospital,department,name,phone,dutyDate,dutyStart,dutyEndDate,dutyEnd
+土城醫院,急診醫學科,陳承彬,0986994929,${today()},08:00,${today()},17:00
+土城醫院,心臟內科,請填姓名,請填手機,${today()},08:00,${today()},17:00
+土城醫院,心臟外科,請填姓名,請填手機,${today()},17:00,${today()},23:00
+亞東醫院,急診醫學科,請填姓名,請填手機,${today()},08:00,${today()},17:00
+亞東醫院,急診醫學科,夜班醫師,請填手機,${today()},20:00,${addDays(today(), 1)},08:00`;
 }
 
 function parseCsv(text) {
