@@ -8,6 +8,7 @@ DATA_FILE = Path(os.environ.get("APP_STATE_FILE", ROOT / "data" / "app_state.jso
 DATABASE_URL = os.environ.get("DATABASE_URL")
 DEMO_USER_IDS = {"u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"}
 DEMO_PHONES = {"0900000000", "0911000001", "0912000001", "0912000002", "0912000003", "0912000004", "0912000005"}
+MAX_ALERT_IMAGE_CHARS = 180000
 ALERT_STATUS_RANK = {
     "no-duty": 0,
     "notified": 0,
@@ -30,10 +31,26 @@ ALERT_PROGRESS_FIELDS = {
 }
 
 
+def compact_alert_images(state):
+    if not isinstance(state, dict) or not isinstance(state.get("alerts"), list):
+        return state
+    for alert in state["alerts"]:
+        if isinstance(alert.get("image"), str) and len(alert["image"]) > MAX_ALERT_IMAGE_CHARS:
+            alert["image"] = ""
+            alert["imageRemoved"] = True
+            audit = alert.get("audit") if isinstance(alert.get("audit"), list) else []
+            note = "EKG 影像因容量限制已移除，通報文字與回覆紀錄保留"
+            if note not in audit:
+                audit.append(note)
+            alert["audit"] = audit
+    return state
+
+
 def sanitize_state(payload):
     state = payload.get("state", payload)
     if not isinstance(state, dict):
         return state
+    state = compact_alert_images(state)
     users = state.get("users")
     if isinstance(users, list):
         state["users"] = [
@@ -51,6 +68,15 @@ def sanitize_state(payload):
                 or any(recipient.get("phone") in DEMO_PHONES for recipient in alert.get("recipients", []))
             )
         ]
+        for alert in state["alerts"]:
+            if isinstance(alert.get("image"), str) and len(alert["image"]) > MAX_ALERT_IMAGE_CHARS:
+                alert["image"] = ""
+                alert["imageRemoved"] = True
+                audit = alert.get("audit") if isinstance(alert.get("audit"), list) else []
+                note = "EKG 影像因容量限制已移除，通報文字與回覆紀錄保留"
+                if note not in audit:
+                    audit.append(note)
+                alert["audit"] = audit
     on_duty = state.get("onDuty")
     if isinstance(on_duty, list):
         state["onDuty"] = [
@@ -132,7 +158,7 @@ def read_persisted_state():
         return None
     if not DATA_FILE.exists():
         return None
-    return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+    return json.loads(DATA_FILE.read_text(encoding="utf-8-sig"))
 
 
 def ensure_db(conn):
@@ -152,9 +178,9 @@ def ensure_db(conn):
 def read_state():
     state = read_persisted_state()
     if state:
-        return state
+        return compact_alert_images(state)
     if DATABASE_URL and DATA_FILE.exists():
-        state = json.loads(DATA_FILE.read_text(encoding="utf-8"))
+        state = json.loads(DATA_FILE.read_text(encoding="utf-8-sig"))
         write_state(state)
         return state
     return None

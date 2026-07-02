@@ -2,6 +2,8 @@ const STORAGE_KEY = "prehospital-critical-alert-test-v1";
 const SESSION_KEY = "prehospital-critical-alert-session-v2";
 const REMEMBER_KEY = "prehospital-critical-alert-remember-v1";
 const API_STATE_URL = "./api/state";
+const MAX_ALERT_IMAGE_CHARS = 180000;
+const ALERT_IMAGES_TO_KEEP = 3;
 
 const dateKey = (date = new Date()) => {
   const local = new Date(date);
@@ -132,6 +134,7 @@ function migrateState(current) {
     response: "",
     ...alert,
   }));
+  compactAlertImages(next);
   next.alertTypes = (current.alertTypes || seed.alertTypes).map((type) => {
     if (type.id === "stemi") {
       return {
@@ -178,8 +181,37 @@ function mergeById(requiredItems, existingItems) {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  compactAlertImages(state);
+  writeStateToLocalStorage();
   syncStateToServer();
+}
+
+function writeStateToLocalStorage() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    compactAlertImages(state, true);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+}
+
+function compactAlertImages(targetState, force = false) {
+  const alerts = targetState.alerts || [];
+  let keptImages = 0;
+  alerts
+    .slice()
+    .sort((a, b) => (b.createdMs || 0) - (a.createdMs || 0))
+    .forEach((alert) => {
+      if (!alert.image) return;
+      keptImages += 1;
+      const shouldRemove = force || alert.image.length > MAX_ALERT_IMAGE_CHARS || keptImages > ALERT_IMAGES_TO_KEEP;
+      if (!shouldRemove) return;
+      alert.image = "";
+      alert.imageRemoved = true;
+      if (!Array.isArray(alert.audit)) alert.audit = [];
+      const note = "EKG 影像因容量限制已移除，通報文字與回覆紀錄保留";
+      if (!alert.audit.includes(note)) alert.audit.push(note);
+    });
 }
 
 function applyPendingCanceledAlerts() {
@@ -203,7 +235,8 @@ async function loadStateFromServer() {
     }
     state = migrateState({ ...structuredClone(seed), ...payload.state });
     applyPendingCanceledAlerts();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    writeStateToLocalStorage();
+    if ((payload.state.alerts || []).some((alert) => alert.image && alert.image.length > MAX_ALERT_IMAGE_CHARS)) syncStateToServer();
     refreshSessionFromState();
     return true;
   } catch {
@@ -1937,7 +1970,7 @@ function escapeHtml(value) {
 
 async function initApp() {
   state = migrateState(state);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  writeStateToLocalStorage();
   await loadStateFromServer();
   session = loadSession();
   if (session?.id && !userById(session.id)?.approved) {
