@@ -2,10 +2,10 @@ const STORAGE_KEY = "prehospital-critical-alert-test-v1";
 const SESSION_KEY = "prehospital-critical-alert-session-v2";
 const REMEMBER_KEY = "prehospital-critical-alert-remember-v1";
 const API_STATE_URL = "./api/state";
-const MAX_ALERT_IMAGE_CHARS = 180000;
+const MAX_ALERT_IMAGE_CHARS = 650000;
 const ALERT_IMAGES_TO_KEEP = 3;
-const EKG_IMAGE_MAX_WIDTH = 800;
-const EKG_IMAGE_QUALITY = 0.6;
+const EKG_IMAGE_MAX_WIDTH = 900;
+const EKG_IMAGE_QUALITY = 0.62;
 
 const dateKey = (date = new Date()) => {
   const local = new Date(date);
@@ -484,12 +484,27 @@ function imageInfoText(value) {
   return `已壓縮為寬度不超過 ${EKG_IMAGE_MAX_WIDTH}px，約 ${dataUrlSizeKb(value)} KB`;
 }
 
+async function fitImageForAlert(source) {
+  const attempts = [
+    [EKG_IMAGE_MAX_WIDTH, EKG_IMAGE_QUALITY],
+    [800, 0.58],
+    [700, 0.54],
+    [600, 0.5],
+  ];
+  let fitted = source;
+  for (const [width, quality] of attempts) {
+    fitted = await downscaleImage(source, width, quality);
+    if (fitted.length <= MAX_ALERT_IMAGE_CHARS) return fitted;
+  }
+  return fitted;
+}
+
 function readCompressedImage(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = async () => {
       try {
-        resolve(await downscaleImage(reader.result));
+        resolve(await fitImageForAlert(reader.result));
       } catch (error) {
         reject(error);
       }
@@ -1574,7 +1589,7 @@ function bindPrehospital() {
         return;
       }
       setMessage("正在送出通報...");
-      const stemiImage = data.typeId === "stemi" ? await downscaleImage(uploadImage) : "";
+      const stemiImage = data.typeId === "stemi" ? await fitImageForAlert(uploadImage) : "";
       const extra = buildExtra(data, type);
       const alertRecord = createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: stemiImage });
       alertComposerMessage = "";
@@ -1596,7 +1611,7 @@ function bindPrehospital() {
 
 function bindFlowControls() {
   document.querySelector("#sampleImage")?.addEventListener("click", async () => {
-    uploadImage = await downscaleImage(sampleEkgImage());
+    uploadImage = await fitImageForAlert(sampleEkgImage());
     uploadImageInfo = imageInfoText(uploadImage);
     alertComposerMessage = "";
     const flow = document.querySelector("#typeFlow");

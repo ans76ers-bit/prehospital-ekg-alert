@@ -8,7 +8,7 @@ DATA_FILE = Path(os.environ.get("APP_STATE_FILE", ROOT / "data" / "app_state.jso
 DATABASE_URL = os.environ.get("DATABASE_URL")
 DEMO_USER_IDS = {"u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"}
 DEMO_PHONES = {"0900000000", "0911000001", "0912000001", "0912000002", "0912000003", "0912000004", "0912000005"}
-MAX_ALERT_IMAGE_CHARS = 180000
+MAX_ALERT_IMAGE_CHARS = 650000
 ALERT_STATUS_RANK = {
     "no-duty": 0,
     "notified": 0,
