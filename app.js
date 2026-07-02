@@ -1042,6 +1042,12 @@ function renderAdminUsersPanel() {
 
 function renderUserAdmin(user) {
   const detail = user.role === "prehospital" ? stationName(user.stationId) : user.role === "hospital" ? `${hospitalName(user.hospitalId)} / ${departmentName(user.departmentId)}` : "管理者";
+  const actions = [
+    !user.approved ? `<button class="secondary approve-user" data-id="${user.id}">核准</button>` : "",
+    `<button class="secondary save-password" data-id="${user.id}">儲存密碼</button>`,
+    user.role !== "admin" ? `<button class="ghost make-admin" data-id="${user.id}">指定管理者</button>` : `<button class="ghost revoke-admin" data-id="${user.id}">取消管理者</button>`,
+    `<button class="danger delete-user" data-id="${user.id}">刪除</button>`,
+  ].filter(Boolean).join("");
   return `
     <article class="item">
       <div class="item-head">
@@ -1059,13 +1065,17 @@ function renderUserAdmin(user) {
       <div class="grid two">
         <label>密碼<input class="password-input" data-id="${user.id}" value="${escapeHtml(user.password || user.phone)}" /></label>
         <div class="actions">
-          <button class="secondary approve-user" data-id="${user.id}">${user.approved ? "改為待審" : "核准"}</button>
-          <button class="secondary save-password" data-id="${user.id}">儲存密碼</button>
-          ${user.role !== "admin" ? `<button class="ghost make-admin" data-id="${user.id}">指定管理者</button>` : ""}
+          ${actions}
         </div>
       </div>
     </article>
   `;
+}
+
+function roleAfterAdminRevoked(user) {
+  if (["prehospital", "hospital"].includes(user.previousRole)) return user.previousRole;
+  if (user.hospitalId && user.departmentId) return "hospital";
+  return "prehospital";
 }
 
 function renderAdminAlertRecord(alert) {
@@ -1357,6 +1367,35 @@ function bindAdmin() {
     user.previousRole = user.role;
     user.role = "admin";
     user.approved = true;
+    saveState();
+    render();
+  }));
+  document.querySelectorAll(".revoke-admin").forEach((button) => button.addEventListener("click", () => {
+    const user = userById(button.dataset.id);
+    if (!user) return;
+    user.role = roleAfterAdminRevoked(user);
+    user.approved = true;
+    delete user.previousRole;
+    if (session?.id === user.id) {
+      session = { ...session, role: user.role };
+      saveSession(session);
+      view = "dashboard";
+    }
+    saveState();
+    render();
+  }));
+  document.querySelectorAll(".delete-user").forEach((button) => button.addEventListener("click", () => {
+    const user = userById(button.dataset.id);
+    if (!user) return;
+    if (!confirm(`確定要刪除「${user.name}」這個帳號嗎？此動作會移除帳號與相關值班資料。`)) return;
+    state.users = state.users.filter((item) => item.id !== user.id);
+    state.onDuty = state.onDuty.filter((duty) => duty.userId !== user.id);
+    if (session?.id === user.id) {
+      session = null;
+      localStorage.removeItem(SESSION_KEY);
+      localStorage.removeItem(REMEMBER_KEY);
+      view = "home";
+    }
     saveState();
     render();
   }));
