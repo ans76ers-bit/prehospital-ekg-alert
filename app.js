@@ -92,7 +92,10 @@ let uploadImage = "";
 let selectedAlertId = "";
 let audio = { context: null, oscillator: null, timer: null };
 let pendingDeletedUserIds = [];
+let pendingDeletedDutyIds = [];
 let authMessage = "";
+let dutyRosterDate = today();
+let dutyHospitalFilter = "all";
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -196,13 +199,17 @@ async function loadStateFromServer() {
 async function syncStateToServer() {
   try {
     const deletedUserIds = [...pendingDeletedUserIds];
+    const deletedDutyIds = [...pendingDeletedDutyIds];
     const response = await fetch(API_STATE_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state, deletedUserIds }),
+      body: JSON.stringify({ state, deletedUserIds, deletedDutyIds }),
     });
     if (response.ok && deletedUserIds.length) {
       pendingDeletedUserIds = pendingDeletedUserIds.filter((id) => !deletedUserIds.includes(id));
+    }
+    if (response.ok && deletedDutyIds.length) {
+      pendingDeletedDutyIds = pendingDeletedDutyIds.filter((id) => !deletedDutyIds.includes(id));
     }
   } catch {}
 }
@@ -287,7 +294,28 @@ function timeToMinutes(value) {
 
 function dutyTimeText(duty) {
   if (!duty.dutyStart && !duty.dutyEnd) return `${duty.dutyDate} 全天`;
-  return `${duty.dutyDate} ${duty.dutyStart || "00:00"}-${duty.dutyEnd || "23:59"}`;
+  return `${duty.dutyDate} ${timeLabel(duty.dutyStart || "00:00")} - ${timeLabel(duty.dutyEnd || "23:59")}`;
+}
+
+function timeLabel(value) {
+  const minutes = timeToMinutes(value);
+  if (minutes === null) return value || "";
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  const period = hour < 12 ? "上午" : "下午";
+  const hour12 = hour % 12 || 12;
+  return `${period} ${String(hour12).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function timeOptions(selectedValue) {
+  const values = [];
+  for (let hour = 0; hour < 24; hour += 1) {
+    for (let minute of [0, 30]) {
+      const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+      values.push(`<option value="${value}" ${selectedValue === value ? "selected" : ""}>${timeLabel(value)}</option>`);
+    }
+  }
+  return values.join("");
 }
 
 function addDays(dateValue, days) {
@@ -928,6 +956,9 @@ function renderAlertSettingsPanel() {
 }
 
 function renderDutyPanel() {
+  const hospitalOptions = [`<option value="all">全部醫院</option>`]
+    .concat(activeHospitals().map((hospital) => `<option value="${hospital.id}" ${dutyHospitalFilter === hospital.id ? "selected" : ""}>${hospital.name}</option>`))
+    .join("");
   return `
     <section class="panel wide-panel">
       <h2>當班人員與班表匯入</h2>
@@ -940,17 +971,66 @@ function renderDutyPanel() {
           </select>
         </label>
         <label>值班日期<input name="dutyDate" type="date" value="${today()}" required /></label>
-        <label>開始時間<input name="dutyStart" type="time" value="08:00" /></label>
-        <label>結束時間<input name="dutyEnd" type="time" value="17:00" /></label>
+        <label>開始時間<select name="dutyStart">${timeOptions("08:00")}</select></label>
+        <label>結束時間<select name="dutyEnd">${timeOptions("17:00")}</select></label>
         <button type="submit">加入值班</button>
       </form>
       <div class="notice">排班只從已核准的院後端醫師帳號選取；醫院與科別會沿用該醫師帳號資料。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
+      <section class="duty-roster-controls">
+        <label>查看日期<input id="dutyRosterDate" type="date" value="${dutyRosterDate}" /></label>
+        <label>醫院篩選<select id="dutyHospitalFilter">${hospitalOptions}</select></label>
+      </section>
+      ${renderDutyRoster()}
       <label>CSV 匯入<textarea id="scheduleCsv">${sampleCsv()}</textarea></label>
       <label>AI 輔助判讀 Excel<input id="excelSchedule" type="file" accept=".xlsx,.xls,.csv" /></label>
       <div class="notice">目前 Demo 可先上傳檔案並產生預覽區；正式版會將 Excel 送到後端/AI 解析後，再由管理者確認匯入。</div>
       <div id="excelPreview" class="small muted">尚未上傳 Excel 班表。</div>
       <button id="importSchedule">匯入班表</button>
-      <div class="list">${state.onDuty.filter((duty) => duty.dutyDate === today()).map(renderDutyAdmin).join("") || `<div class="muted">今日尚無班表</div>`}</div>
+    </section>
+  `;
+}
+
+function renderDutyRoster() {
+  const hospitals = activeHospitals().filter((hospital) => dutyHospitalFilter === "all" || hospital.id === dutyHospitalFilter);
+  return `
+    <section class="duty-roster">
+      ${hospitals.map(renderHospitalDutySection).join("") || `<div class="muted">沒有符合條件的醫院</div>`}
+    </section>
+  `;
+}
+
+function renderHospitalDutySection(hospital) {
+  const duties = state.onDuty.filter((duty) => duty.dutyDate === dutyRosterDate && duty.hospitalId === hospital.id);
+  const activeDepartmentIds = new Set([...activeDepartments().map((department) => department.id), ...duties.map((duty) => duty.departmentId)]);
+  const departments = [...activeDepartmentIds]
+    .map((id) => state.departments.find((department) => department.id === id) || { id, name: departmentName(id) })
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"));
+  return `
+    <section class="duty-hospital">
+      <div class="item-head">
+        <h3>${hospital.name}</h3>
+        <span class="status opened">${duties.filter((duty) => duty.active).length} 人當班</span>
+      </div>
+      <div class="duty-departments">
+        ${departments.map((department) => renderDepartmentDutySection(hospital.id, department)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderDepartmentDutySection(hospitalId, department) {
+  const duties = state.onDuty
+    .filter((duty) => duty.dutyDate === dutyRosterDate && duty.hospitalId === hospitalId && duty.departmentId === department.id)
+    .sort((a, b) => `${a.dutyStart || ""}${userById(a.userId)?.name || ""}`.localeCompare(`${b.dutyStart || ""}${userById(b.userId)?.name || ""}`, "zh-Hant"));
+  return `
+    <section class="duty-department">
+      <div class="item-head">
+        <strong>${department.name}</strong>
+        <span class="muted">${duties.length ? `${duties.length} 筆` : "尚無排班"}</span>
+      </div>
+      <div class="list">
+        ${duties.map(renderDutyAdmin).join("") || `<div class="muted">此科別目前沒有排班</div>`}
+      </div>
     </section>
   `;
 }
@@ -1133,7 +1213,10 @@ function renderDutyAdmin(duty) {
         <span class="status ${duty.active ? "done" : "pending"}">${duty.active ? "當班" : "停用"}</span>
       </div>
       <div class="meta"><span>${hospitalName(duty.hospitalId)}</span><span>${departmentName(duty.departmentId)}</span><span>${dutyTimeText(duty)}</span></div>
-      <button class="secondary toggle-duty" data-id="${duty.id}">${duty.active ? "停用" : "啟用"}</button>
+      <div class="actions">
+        <button class="secondary toggle-duty" data-id="${duty.id}">${duty.active ? "停用" : "啟用"}</button>
+        <button class="danger remove-duty" data-id="${duty.id}">移除</button>
+      </div>
     </article>
   `;
 }
@@ -1470,6 +1553,8 @@ function bindAdmin() {
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     const user = userById(data.userId);
     if (!user || user.role !== "hospital" || !user.approved) return alert("請選擇已核准的院後端醫師。");
+    dutyRosterDate = data.dutyDate || today();
+    dutyHospitalFilter = user.hospitalId;
     state.onDuty.push({
       id: uid("od"),
       userId: user.id,
@@ -1483,9 +1568,26 @@ function bindAdmin() {
     saveState();
     render();
   });
+  document.querySelector("#dutyRosterDate")?.addEventListener("change", (event) => {
+    dutyRosterDate = event.currentTarget.value || today();
+    render();
+  });
+  document.querySelector("#dutyHospitalFilter")?.addEventListener("change", (event) => {
+    dutyHospitalFilter = event.currentTarget.value || "all";
+    render();
+  });
   document.querySelectorAll(".toggle-duty").forEach((button) => button.addEventListener("click", () => {
     const duty = state.onDuty.find((item) => item.id === button.dataset.id);
     duty.active = !duty.active;
+    saveState();
+    render();
+  }));
+  document.querySelectorAll(".remove-duty").forEach((button) => button.addEventListener("click", () => {
+    const duty = state.onDuty.find((item) => item.id === button.dataset.id);
+    if (!duty) return;
+    if (!confirm(`確定要移除 ${hospitalName(duty.hospitalId)} / ${departmentName(duty.departmentId)} / ${dutyTimeText(duty)} 的值班資料嗎？`)) return;
+    pendingDeletedDutyIds.push(duty.id);
+    state.onDuty = state.onDuty.filter((item) => item.id !== duty.id);
     saveState();
     render();
   }));
@@ -1511,7 +1613,9 @@ function bindAdmin() {
         dutyEnd: row.dutyEnd || "",
         active: true,
       });
+      dutyRosterDate = row.dutyDate || today();
     });
+    dutyHospitalFilter = "all";
     saveState();
     render();
   });

@@ -52,7 +52,7 @@ def merge_list_by_id(existing_items, incoming_items, deleted_ids=None):
     return list(merged.values())
 
 
-def merge_state(existing_state, incoming_state, deleted_user_ids=None):
+def merge_state(existing_state, incoming_state, deleted_user_ids=None, deleted_duty_ids=None):
     if not isinstance(existing_state, dict):
         return incoming_state
     if not isinstance(incoming_state, dict):
@@ -61,7 +61,7 @@ def merge_state(existing_state, incoming_state, deleted_user_ids=None):
     merged["users"] = merge_list_by_id(existing_state.get("users", []), incoming_state.get("users", []), deleted_user_ids)
     merged["onDuty"] = [
         duty
-        for duty in merge_list_by_id(existing_state.get("onDuty", []), incoming_state.get("onDuty", []))
+        for duty in merge_list_by_id(existing_state.get("onDuty", []), incoming_state.get("onDuty", []), deleted_duty_ids)
         if duty.get("userId") not in set(deleted_user_ids or [])
     ]
     for key in ("stations", "hospitals", "departments", "alertTypes", "alerts"):
@@ -117,10 +117,10 @@ def read_state():
     return None
 
 
-def write_state(state, deleted_user_ids=None):
-    current = read_persisted_state() if deleted_user_ids or DATABASE_URL or DATA_FILE.exists() else None
+def write_state(state, deleted_user_ids=None, deleted_duty_ids=None):
+    current = read_persisted_state() if deleted_user_ids or deleted_duty_ids or DATABASE_URL or DATA_FILE.exists() else None
     if current:
-        state = merge_state(current, state, deleted_user_ids)
+        state = merge_state(current, state, deleted_user_ids, deleted_duty_ids)
     if DATABASE_URL:
         with db_connect() as conn:
             ensure_db(conn)
@@ -173,7 +173,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                write_state(sanitize_state(payload), payload.get("deletedUserIds", []))
+                write_state(sanitize_state(payload), payload.get("deletedUserIds", []), payload.get("deletedDutyIds", []))
                 self._send_json({"ok": True})
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
