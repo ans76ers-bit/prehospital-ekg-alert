@@ -98,6 +98,7 @@ let authMessage = "";
 let dutyRosterDate = today();
 let dutyHospitalFilter = "all";
 let alertAudioUnlocked = false;
+let alertComposerMessage = "";
 const notifiedAlertIds = new Set();
 
 function loadState() {
@@ -779,6 +780,7 @@ function renderAlertComposer() {
         <label>通報類別<select name="typeId" id="typeSelect">${typeOptions}</select></label>
         <label>後送醫院<select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospital.name}</option>`).join("")}</select></label>
       </div>
+      <div class="notice" id="alertComposerMessage" ${alertComposerMessage ? "" : "hidden"}>${escapeHtml(alertComposerMessage)}</div>
       <div id="typeFlow"></div>
       <button type="submit">送出通報</button>
     </form>
@@ -1428,11 +1430,13 @@ function bindAdminModeSwitch() {
 function bindPrehospital() {
   document.querySelector("#startAlert")?.addEventListener("click", () => {
     view = "alert";
+    alertComposerMessage = "";
     render();
   });
   document.querySelector("#backDashboard")?.addEventListener("click", () => {
     view = session.role === "admin" ? "adminPrehospital" : "dashboard";
     uploadImage = "";
+    alertComposerMessage = "";
     render();
   });
   const typeSelect = document.querySelector("#typeSelect");
@@ -1444,35 +1448,70 @@ function bindPrehospital() {
     };
     typeSelect.addEventListener("change", () => {
       uploadImage = "";
+      alertComposerMessage = "";
       paintFlow();
     });
     paintFlow();
   }
   document.querySelector("#alertForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
-    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-    const type = alertType(data.typeId);
-    if (data.typeId === "stemi" && !uploadImage) return alert("請先上傳或使用範例 EKG 影像。");
-    if (data.decision === "否") return alert("已選擇不通報，未送出通知。");
-    if (data.strokeWindow?.includes(">=12")) return alert("最後正常時間已超過 12 小時，Demo 依規則不送出通報。");
-    const extra = buildExtra(data, type);
-    const alertRecord = createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: data.typeId === "stemi" ? uploadImage : "" });
-    if (alertRecord.recipients.length) {
-      window.alert(`已通知：${alertRecord.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、")}。對方需登入並開啟院後端頁面，且先啟用鈴聲震動，手機才會即時響鈴。`);
-    } else {
-      window.alert("沒有找到目前值班且符合科別的接收者，請確認管理者頁面的值班日期、時間、醫院與科別。");
+    const message = document.querySelector("#alertComposerMessage");
+    const setMessage = (text) => {
+      alertComposerMessage = text;
+      if (message) {
+        message.textContent = text;
+        message.hidden = !text;
+      }
+    };
+    try {
+      const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const type = alertType(data.typeId);
+      if (!type) {
+        setMessage("找不到通報類別，請重新整理頁面後再試。");
+        return;
+      }
+      if (data.typeId === "stemi" && !uploadImage) {
+        setMessage("STEMI 通報需先上傳 EKG 影像，或按「使用範例影像」後再送出。");
+        return;
+      }
+      if (data.decision === "否") {
+        setMessage("已選擇不通報，未送出通知。");
+        return;
+      }
+      if (data.strokeWindow?.includes(">=12")) {
+        setMessage("最後正常時間已超過 12 小時，Demo 依規則不送出通報。");
+        return;
+      }
+      setMessage("正在送出通報...");
+      const extra = buildExtra(data, type);
+      const alertRecord = createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: data.typeId === "stemi" ? uploadImage : "" });
+      alertComposerMessage = "";
+      if (alertRecord.recipients.length) {
+        window.alert(`已通知：${alertRecord.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、")}。對方需登入並開啟院後端頁面，且先啟用鈴聲震動，手機才會即時響鈴。`);
+      } else {
+        window.alert("沒有找到目前值班且符合科別的接收者，請確認管理者頁面的值班日期、時間、醫院與科別。");
+      }
+      uploadImage = "";
+      view = session.role === "admin" ? "adminPrehospital" : "dashboard";
+      render();
+    } catch (error) {
+      console.error(error);
+      setMessage("通報送出時發生錯誤，請重新整理頁面後再試。");
     }
-    uploadImage = "";
-    view = session.role === "admin" ? "adminPrehospital" : "dashboard";
-    render();
   });
 }
 
 function bindFlowControls() {
   document.querySelector("#sampleImage")?.addEventListener("click", () => {
     uploadImage = sampleEkgImage();
+    alertComposerMessage = "";
     const flow = document.querySelector("#typeFlow");
     flow.innerHTML = renderTypeFlow("stemi");
+    const message = document.querySelector("#alertComposerMessage");
+    if (message) {
+      message.textContent = "";
+      message.hidden = true;
+    }
     bindFlowControls();
   });
   document.querySelector("#ekgFile")?.addEventListener("change", (event) => {
@@ -1481,8 +1520,14 @@ function bindFlowControls() {
     const reader = new FileReader();
     reader.onload = () => {
       uploadImage = reader.result;
+      alertComposerMessage = "";
       const flow = document.querySelector("#typeFlow");
       flow.innerHTML = renderTypeFlow("stemi");
+      const message = document.querySelector("#alertComposerMessage");
+      if (message) {
+        message.textContent = "";
+        message.hidden = true;
+      }
       bindFlowControls();
     };
     reader.readAsDataURL(file);
