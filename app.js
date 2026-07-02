@@ -415,7 +415,41 @@ function sampleEkgImage() {
     }
     ctx.stroke();
   });
-  return canvas.toDataURL("image/png");
+  return canvas.toDataURL("image/jpeg", 0.72);
+}
+
+function downscaleImage(source, maxWidth = 1000, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, maxWidth / image.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    image.onerror = reject;
+    image.src = source;
+  });
+}
+
+function readCompressedImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        resolve(await downscaleImage(reader.result));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function recipientsFor(hospitalId, departments) {
@@ -1453,7 +1487,7 @@ function bindPrehospital() {
     });
     paintFlow();
   }
-  document.querySelector("#alertForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#alertForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = document.querySelector("#alertComposerMessage");
     const setMessage = (text) => {
@@ -1483,8 +1517,9 @@ function bindPrehospital() {
         return;
       }
       setMessage("正在送出通報...");
+      const stemiImage = data.typeId === "stemi" ? await downscaleImage(uploadImage) : "";
       const extra = buildExtra(data, type);
-      const alertRecord = createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: data.typeId === "stemi" ? uploadImage : "" });
+      const alertRecord = createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: stemiImage });
       alertComposerMessage = "";
       if (alertRecord.recipients.length) {
         window.alert(`已通知：${alertRecord.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、")}。對方需登入並開啟院後端頁面，且先啟用鈴聲震動，手機才會即時響鈴。`);
@@ -1517,20 +1552,27 @@ function bindFlowControls() {
   document.querySelector("#ekgFile")?.addEventListener("change", (event) => {
     const file = event.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      uploadImage = reader.result;
+    readCompressedImage(file)
+      .then((image) => {
+        uploadImage = image;
+        alertComposerMessage = "";
+        const flow = document.querySelector("#typeFlow");
+        flow.innerHTML = renderTypeFlow("stemi");
+        const message = document.querySelector("#alertComposerMessage");
+        if (message) {
+          message.textContent = "";
+          message.hidden = true;
+        }
+        bindFlowControls();
+      })
+      .catch(() => {
       alertComposerMessage = "";
-      const flow = document.querySelector("#typeFlow");
-      flow.innerHTML = renderTypeFlow("stemi");
       const message = document.querySelector("#alertComposerMessage");
       if (message) {
-        message.textContent = "";
-        message.hidden = true;
+        message.textContent = "EKG 影像讀取失敗，請重新拍攝或改用範例影像。";
+        message.hidden = false;
       }
-      bindFlowControls();
-    };
-    reader.readAsDataURL(file);
+      });
   });
 }
 
