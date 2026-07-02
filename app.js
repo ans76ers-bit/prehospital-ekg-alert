@@ -92,6 +92,7 @@ let uploadImage = "";
 let selectedAlertId = "";
 let audio = { context: null, oscillator: null, timer: null };
 let pendingDeletedUserIds = [];
+let authMessage = "";
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -504,8 +505,9 @@ function renderLogin() {
         </div>
         <label>電話號碼<input name="phone" required autocomplete="username" /></label>
         <label>密碼<input name="password" type="password" required autocomplete="current-password" /></label>
+        <div class="notice" id="authMessage" ${authMessage ? "" : "hidden"}>${escapeHtml(authMessage)}</div>
         <div class="actions">
-          <button type="submit">登入</button>
+          <button type="button" id="loginSubmit">登入</button>
           <button type="button" class="secondary public-action" data-view="home">返回</button>
         </div>
       </form>
@@ -1155,22 +1157,52 @@ function renderAlertModal(id) {
 function bindPublic() {
   document.querySelectorAll(".public-action").forEach((button) => button.addEventListener("click", () => {
     view = button.dataset.view;
+    authMessage = "";
     render();
   }));
-  document.querySelector("#loginForm")?.addEventListener("submit", async (event) => {
+  const handleLogin = async (event) => {
     event.preventDefault();
-    await loadStateFromServer();
-    const data = new FormData(event.currentTarget);
+    const form = document.querySelector("#loginForm");
+    const message = document.querySelector("#authMessage");
+    const button = document.querySelector("#loginSubmit");
+    const setMessage = (text) => {
+      authMessage = text;
+      if (message) {
+        message.textContent = text;
+        message.hidden = !text;
+      }
+    };
+    const data = new FormData(form);
     const phone = String(data.get("phone") || "").trim();
     const password = String(data.get("password") || "").trim();
+    if (!phone || !password) {
+      setMessage("請先輸入電話號碼與密碼。");
+      return;
+    }
+    if (button) {
+      button.disabled = true;
+      button.textContent = "登入中";
+    }
+    setMessage("正在確認帳號狀態...");
+    await loadStateFromServer();
     const user = state.users.find((item) => item.phone === phone && item.approved && (item.password || item.phone) === password);
-    if (!user) return alert("找不到已核准帳號。請使用測試帳號或先由管理者核准。");
+    if (!user) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "登入";
+      }
+      setMessage("找不到已核准帳號，或密碼不正確。請確認管理者已核准，並使用帳號管理中的電話與密碼。");
+      return;
+    }
+    authMessage = "";
     session = structuredClone(user);
     saveSession();
     touchCurrentUser(true);
     view = "dashboard";
     render();
-  });
+  };
+  document.querySelector("#loginForm")?.addEventListener("submit", handleLogin);
+  document.querySelector("#loginSubmit")?.addEventListener("click", handleLogin);
   document.querySelectorAll("[data-register-role]").forEach((button) => button.addEventListener("click", () => {
     document.querySelectorAll("[data-register-role]").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
