@@ -95,7 +95,7 @@ let adminPage = "overview";
 let uploadImage = "";
 let uploadImageInfo = "";
 let selectedAlertId = "";
-let audio = { context: null, oscillator: null, timer: null };
+let audio = { context: null, oscillator: null, gain: null, timer: null };
 let pendingDeletedUserIds = [];
 let pendingDeletedDutyIds = [];
 let pendingCanceledAlertIds = [];
@@ -105,6 +105,7 @@ let dutyHospitalFilter = "all";
 let alertAudioUnlocked = false;
 let alertComposerMessage = "";
 const notifiedAlertIds = new Set();
+const ALERT_VIBRATION_PATTERN = [900, 180, 900, 180, 1400, 240, 900];
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -944,7 +945,6 @@ function renderHospitalUser() {
         </div>
         <div class="meta"><span>${hospitalName(session.hospitalId)}</span><span>${departmentName(session.departmentId)}</span><span>${session.phone}</span></div>
         <div class="notice">${reminderStatusText()}</div>
-        <div class="actions"><button type="button" class="secondary" id="enableAlerts">啟用鈴聲震動</button></div>
         <div class="list">${relevant.length ? relevant.map(renderHospitalAlert).join("") : `<div class="muted">目前沒有派送給你的通報</div>`}</div>
       </section>
       <section class="panel">
@@ -1573,7 +1573,7 @@ function bindPrehospital() {
       const alertRecord = createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: stemiImage });
       alertComposerMessage = "";
       if (alertRecord.recipients.length) {
-        window.alert(`已通知：${alertRecord.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、")}。對方需登入並開啟院後端頁面，且先啟用鈴聲震動，手機才會即時響鈴。`);
+        window.alert(`已通知：${alertRecord.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、")}。對方需登入並開啟院後端頁面，手機瀏覽器允許聲音後才會即時響鈴震動。`);
       } else {
         window.alert("沒有找到目前值班且符合科別的接收者，請確認管理者頁面的值班日期、時間、醫院與科別。");
       }
@@ -1638,7 +1638,6 @@ function buildExtra(data, type) {
 }
 
 function bindHospitalUser() {
-  document.querySelector("#enableAlerts")?.addEventListener("click", () => enableAlertReminders());
   document.querySelectorAll(".accept-alert").forEach((button) => button.addEventListener("click", () => {
     const item = state.alerts.find((alert) => alert.id === button.dataset.id);
     if (!item || item.status !== "notified") return;
@@ -1885,17 +1884,32 @@ async function enableAlertReminders() {
       await Notification.requestPermission();
     } catch {}
   }
-  if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+  if (navigator.vibrate) navigator.vibrate([240, 80, 240]);
   try {
-    await playAlertTone();
+    await playSirenTone(700);
   } catch {}
   render();
 }
 
+function shouldAutoUnlockAlerts() {
+  return session?.role === "hospital" || (session?.role === "admin" && view === "adminHospital");
+}
+
+function installReminderAutoUnlock() {
+  const unlock = () => {
+    if (!shouldAutoUnlockAlerts()) return;
+    enableAlertReminders();
+    window.removeEventListener("pointerdown", unlock);
+    window.removeEventListener("keydown", unlock);
+  };
+  window.addEventListener("pointerdown", unlock, { passive: true });
+  window.addEventListener("keydown", unlock);
+}
+
 function reminderStatusText() {
   const notificationText = "Notification" in window ? `通知權限：${Notification.permission === "granted" ? "已允許" : Notification.permission === "denied" ? "已封鎖" : "尚未允許"}` : "此瀏覽器不支援通知";
-  const audioText = alertAudioUnlocked ? "提醒音：已啟用" : "提醒音：請先點啟用";
-  return `${audioText}；${notificationText}。手機需保持登入並開啟此頁，才能即時響鈴震動。`;
+  const audioText = alertAudioUnlocked ? "救護車警報音：已準備" : "救護車警報音：登入後點一下頁面即可自動準備";
+  return `${audioText}；${notificationText}。手機需保持登入並開啟此頁，瀏覽器才允許即時響鈴震動。`;
 }
 
 async function showDeviceNotification(alert) {
@@ -1905,7 +1919,7 @@ async function showDeviceNotification(alert) {
   try {
     if (navigator.serviceWorker?.ready) {
       const registration = await navigator.serviceWorker.ready;
-      registration.showNotification(title, { body, tag: alert.id, requireInteraction: true, vibrate: [600, 180, 600, 180, 600] });
+      registration.showNotification(title, { body, tag: alert.id, requireInteraction: true, vibrate: ALERT_VIBRATION_PATTERN });
       return;
     }
   } catch {}
@@ -1924,42 +1938,43 @@ function triggerAlertReminders(alerts) {
 }
 
 async function playAlertTone() {
+  await playSirenTone(850);
+}
+
+async function playSirenTone(durationMs = 1100) {
   const unlocked = await ensureAudioContext();
   if (!unlocked) return;
   const oscillator = audio.context.createOscillator();
   const gain = audio.context.createGain();
-  oscillator.frequency.value = 880;
-  gain.gain.value = 0.08;
+  const now = audio.context.currentTime;
+  oscillator.type = "sawtooth";
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.24, now + 0.04);
+  for (let i = 0; i < 8; i += 1) {
+    const t = now + i * 0.14;
+    oscillator.frequency.setValueAtTime(i % 2 === 0 ? 620 : 980, t);
+  }
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + durationMs / 1000);
   oscillator.connect(gain);
   gain.connect(audio.context.destination);
-  oscillator.start();
-  window.setTimeout(() => oscillator.stop(), 220);
+  oscillator.start(now);
+  oscillator.stop(now + durationMs / 1000);
 }
 
 function startAlarm() {
   if (audio.timer) return;
   const play = async () => {
     try {
-      if (navigator.vibrate) navigator.vibrate([500, 180, 500]);
+      if (navigator.vibrate) navigator.vibrate(ALERT_VIBRATION_PATTERN);
       const unlocked = await ensureAudioContext();
       if (!unlocked) return;
-      audio.oscillator = audio.context.createOscillator();
-      const gain = audio.context.createGain();
-      audio.oscillator.frequency.value = 880;
-      gain.gain.value = 0.08;
-      audio.oscillator.connect(gain);
-      gain.connect(audio.context.destination);
-      audio.oscillator.start();
-      window.setTimeout(() => {
-        audio.oscillator?.stop();
-        audio.oscillator = null;
-      }, 420);
+      await playSirenTone(1200);
     } catch {
       stopAlarm();
     }
   };
   play();
-  audio.timer = window.setInterval(play, 1400);
+  audio.timer = window.setInterval(play, 1800);
 }
 
 function stopAlarmIfNotNeeded() {
@@ -1999,6 +2014,7 @@ async function initApp() {
     session = null;
     saveSession();
   }
+  installReminderAutoUnlock();
   render();
   window.setInterval(pollServerState, 3000);
   window.setInterval(() => {
