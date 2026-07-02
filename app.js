@@ -4,6 +4,8 @@ const REMEMBER_KEY = "prehospital-critical-alert-remember-v1";
 const API_STATE_URL = "./api/state";
 const MAX_ALERT_IMAGE_CHARS = 180000;
 const ALERT_IMAGES_TO_KEEP = 3;
+const EKG_IMAGE_MAX_WIDTH = 800;
+const EKG_IMAGE_QUALITY = 0.6;
 
 const dateKey = (date = new Date()) => {
   const local = new Date(date);
@@ -91,6 +93,7 @@ let session = loadSession();
 let view = session ? "dashboard" : "home";
 let adminPage = "overview";
 let uploadImage = "";
+let uploadImageInfo = "";
 let selectedAlertId = "";
 let audio = { context: null, oscillator: null, timer: null };
 let pendingDeletedUserIds = [];
@@ -448,10 +451,10 @@ function sampleEkgImage() {
     }
     ctx.stroke();
   });
-  return canvas.toDataURL("image/jpeg", 0.72);
+  return canvas.toDataURL("image/jpeg", EKG_IMAGE_QUALITY);
 }
 
-function downscaleImage(source, maxWidth = 1000, quality = 0.72) {
+function downscaleImage(source, maxWidth = EKG_IMAGE_MAX_WIDTH, quality = EKG_IMAGE_QUALITY) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
@@ -468,6 +471,16 @@ function downscaleImage(source, maxWidth = 1000, quality = 0.72) {
     image.onerror = reject;
     image.src = source;
   });
+}
+
+function dataUrlSizeKb(value) {
+  const base64 = String(value || "").split(",")[1] || "";
+  return Math.round((base64.length * 3) / 4 / 1024);
+}
+
+function imageInfoText(value) {
+  if (!value) return "";
+  return `已壓縮為寬度不超過 ${EKG_IMAGE_MAX_WIDTH}px，約 ${dataUrlSizeKb(value)} KB`;
 }
 
 function readCompressedImage(file) {
@@ -862,6 +875,7 @@ function renderTypeFlow(typeId) {
       <label>EKG 影像<input id="ekgFile" type="file" accept="image/*" capture="environment" /></label>
       <div class="actions"><button type="button" class="secondary" id="sampleImage">使用範例影像</button></div>
       <div class="preview ${uploadImage ? "" : "empty"}">${uploadImage ? `<img src="${uploadImage}" alt="EKG preview" />` : "尚未選擇影像"}</div>
+      ${uploadImageInfo ? `<div class="small">${escapeHtml(uploadImageInfo)}</div>` : ""}
     `;
   }
   if (typeId === "ecmo") {
@@ -1497,12 +1511,15 @@ function bindAdminModeSwitch() {
 function bindPrehospital() {
   document.querySelector("#startAlert")?.addEventListener("click", () => {
     view = "alert";
+    uploadImage = "";
+    uploadImageInfo = "";
     alertComposerMessage = "";
     render();
   });
   document.querySelector("#backDashboard")?.addEventListener("click", () => {
     view = session.role === "admin" ? "adminPrehospital" : "dashboard";
     uploadImage = "";
+    uploadImageInfo = "";
     alertComposerMessage = "";
     render();
   });
@@ -1515,6 +1532,7 @@ function bindPrehospital() {
     };
     typeSelect.addEventListener("change", () => {
       uploadImage = "";
+      uploadImageInfo = "";
       alertComposerMessage = "";
       paintFlow();
     });
@@ -1560,6 +1578,7 @@ function bindPrehospital() {
         window.alert("沒有找到目前值班且符合科別的接收者，請確認管理者頁面的值班日期、時間、醫院與科別。");
       }
       uploadImage = "";
+      uploadImageInfo = "";
       view = session.role === "admin" ? "adminPrehospital" : "dashboard";
       render();
     } catch (error) {
@@ -1570,8 +1589,9 @@ function bindPrehospital() {
 }
 
 function bindFlowControls() {
-  document.querySelector("#sampleImage")?.addEventListener("click", () => {
-    uploadImage = sampleEkgImage();
+  document.querySelector("#sampleImage")?.addEventListener("click", async () => {
+    uploadImage = await downscaleImage(sampleEkgImage());
+    uploadImageInfo = imageInfoText(uploadImage);
     alertComposerMessage = "";
     const flow = document.querySelector("#typeFlow");
     flow.innerHTML = renderTypeFlow("stemi");
@@ -1588,6 +1608,7 @@ function bindFlowControls() {
     readCompressedImage(file)
       .then((image) => {
         uploadImage = image;
+        uploadImageInfo = imageInfoText(uploadImage);
         alertComposerMessage = "";
         const flow = document.querySelector("#typeFlow");
         flow.innerHTML = renderTypeFlow("stemi");
@@ -1599,12 +1620,13 @@ function bindFlowControls() {
         bindFlowControls();
       })
       .catch(() => {
-      alertComposerMessage = "";
-      const message = document.querySelector("#alertComposerMessage");
-      if (message) {
-        message.textContent = "EKG 影像讀取失敗，請重新拍攝或改用範例影像。";
-        message.hidden = false;
-      }
+        uploadImageInfo = "";
+        alertComposerMessage = "";
+        const message = document.querySelector("#alertComposerMessage");
+        if (message) {
+          message.textContent = "EKG 影像讀取失敗，請重新拍攝或改用範例影像。";
+          message.hidden = false;
+        }
       });
   });
 }
