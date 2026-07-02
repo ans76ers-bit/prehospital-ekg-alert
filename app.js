@@ -87,6 +87,7 @@ const seed = {
 let state = loadState();
 let session = loadSession();
 let view = session ? "dashboard" : "home";
+let adminPage = "overview";
 let uploadImage = "";
 let selectedAlertId = "";
 let audio = { context: null, oscillator: null, timer: null };
@@ -821,52 +822,147 @@ function renderHospitalAlert(alert) {
 }
 
 function renderAdmin() {
+  const pages = {
+    overview: {
+      title: "總覽",
+      content: `
+        ${renderUserOverviewPanel()}
+        ${renderStatsPanel("全系統通報統計", state.alerts)}
+        ${renderRecentAdminRecordsPanel(5)}
+      `,
+    },
+    accounts: {
+      title: "帳號管理",
+      content: `
+        ${renderPendingUsersPanel()}
+        ${renderPrehospitalUsersPanel()}
+        ${renderHospitalUsersPanel()}
+        ${renderAdminUsersPanel()}
+      `,
+    },
+    units: {
+      title: "單位設定",
+      content: renderUnitSettingsPanel(),
+    },
+    duty: {
+      title: "班表管理",
+      content: renderDutyPanel(),
+    },
+    alerts: {
+      title: "通報設定",
+      content: renderAlertSettingsPanel(),
+    },
+    stats: {
+      title: "統計資料",
+      content: `
+        ${renderStatsPanel("全系統通報統計", state.alerts)}
+        ${renderAdminRecordsPanel()}
+      `,
+    },
+  };
+  const current = pages[adminPage] || pages.overview;
   return `
-    <section class="grid two">
-      ${renderUserOverviewPanel()}
-      ${renderPrehospitalUsersPanel()}
-      ${renderHospitalUsersPanel()}
-      ${renderAdminUsersPanel()}
-      <section class="panel">
-        <h2>醫院與分隊</h2>
-        <form id="hospitalForm" class="grid three"><label>醫院<input name="name" required /></label><label>縣市<input name="city" value="新北市" /></label><button type="submit">新增醫院</button></form>
-        <form id="stationForm" class="grid three"><label>分隊<input name="name" required /></label><label>縣市<input name="city" value="新北市" /></label><button type="submit">新增分隊</button></form>
-        <div class="meta"><span>醫院：${state.hospitals.map((h) => h.name).join("、")}</span></div>
-        <div class="meta"><span>分隊：${state.stations.map((s) => s.name).join("、")}</span></div>
-      </section>
-      <section class="panel">
-        <h2>科別與通報類別</h2>
-        <form id="departmentForm" class="grid two"><label>科別<input name="name" required /></label><button type="submit">新增科別</button></form>
-        <div class="list">${state.alertTypes.map(renderAlertTypeAdmin).join("")}</div>
-      </section>
-      <section class="panel">
-        <h2>當班人員與班表匯入</h2>
-        ${hospitalDoctors().length ? "" : `<div class="notice">目前沒有已核准的院後端醫師。請先讓醫師註冊院後端帳號，或在帳號管理中核准後再排班。</div>`}
-        <form id="manualDutyForm" class="grid three">
-          <label>院後端醫師
-            <select name="userId" required>
-              <option value="">請選擇已註冊醫師</option>
-              ${hospitalDoctors().map((doctor) => `<option value="${doctor.id}">${doctor.name} / ${hospitalName(doctor.hospitalId)} / ${departmentName(doctor.departmentId)}</option>`).join("")}
-            </select>
-          </label>
-          <label>值班日期<input name="dutyDate" type="date" value="${today()}" required /></label>
-          <label>開始時間<input name="dutyStart" type="time" value="08:00" /></label>
-          <label>結束時間<input name="dutyEnd" type="time" value="17:00" /></label>
-          <button type="submit">加入值班</button>
-        </form>
-        <div class="notice">排班只從已核准的院後端醫師帳號選取；醫院與科別會沿用該醫師帳號資料。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
-        <label>CSV 匯入<textarea id="scheduleCsv">${sampleCsv()}</textarea></label>
-        <label>AI 輔助判讀 Excel<input id="excelSchedule" type="file" accept=".xlsx,.xls,.csv" /></label>
-        <div class="notice">目前 Demo 可先上傳檔案並產生預覽區；正式版會將 Excel 送到後端/AI 解析後，再由管理者確認匯入。</div>
-        <div id="excelPreview" class="small muted">尚未上傳 Excel 班表。</div>
-        <button id="importSchedule">匯入班表</button>
-        <div class="list">${state.onDuty.filter((duty) => duty.dutyDate === today()).map(renderDutyAdmin).join("")}</div>
-      </section>
-      ${renderStatsPanel("全系統通報統計", state.alerts)}
-      <section class="panel">
-        <h2>後台紀錄</h2>
-        <div class="list">${state.alerts.slice().reverse().map(renderAdminAlertRecord).join("") || `<div class="muted">尚無通報</div>`}</div>
-      </section>
+    <section class="admin-page">
+      ${renderAdminSubTabs(pages)}
+      <div class="toolbar">
+        <h2>${current.title}</h2>
+      </div>
+      <div class="grid two">
+        ${current.content}
+      </div>
+    </section>
+  `;
+}
+
+function renderAdminSubTabs(pages) {
+  return `
+    <nav class="tabs admin-subtabs">
+      ${Object.entries(pages).map(([key, page]) => `
+        <button type="button" class="${adminPage === key ? "active" : ""}" data-admin-page="${key}">${page.title}</button>
+      `).join("")}
+    </nav>
+  `;
+}
+
+function renderPendingUsersPanel() {
+  const users = state.users.filter((user) => !user.approved);
+  return `
+    <section class="panel">
+      <h2>待審核帳號</h2>
+      <div class="list">${users.length ? users.map(renderUserAdmin).join("") : `<div class="muted">目前沒有待審核帳號</div>`}</div>
+    </section>
+  `;
+}
+
+function renderUnitSettingsPanel() {
+  return `
+    <section class="panel">
+      <h2>醫院與分隊</h2>
+      <form id="hospitalForm" class="grid three"><label>醫院<input name="name" required /></label><label>縣市<input name="city" value="新北市" /></label><button type="submit">新增醫院</button></form>
+      <form id="stationForm" class="grid three"><label>分隊<input name="name" required /></label><label>縣市<input name="city" value="新北市" /></label><button type="submit">新增分隊</button></form>
+      <div class="meta"><span>醫院：${state.hospitals.map((h) => h.name).join("、")}</span></div>
+      <div class="meta"><span>分隊：${state.stations.map((s) => s.name).join("、")}</span></div>
+    </section>
+    <section class="panel">
+      <h2>科別</h2>
+      <form id="departmentForm" class="grid two"><label>科別<input name="name" required /></label><button type="submit">新增科別</button></form>
+      <div class="meta"><span>${state.departments.map((department) => department.name).join("、")}</span></div>
+    </section>
+  `;
+}
+
+function renderAlertSettingsPanel() {
+  return `
+    <section class="panel wide-panel">
+      <h2>通報類別</h2>
+      <div class="list">${state.alertTypes.map(renderAlertTypeAdmin).join("")}</div>
+    </section>
+  `;
+}
+
+function renderDutyPanel() {
+  return `
+    <section class="panel wide-panel">
+      <h2>當班人員與班表匯入</h2>
+      ${hospitalDoctors().length ? "" : `<div class="notice">目前沒有已核准的院後端醫師。請先讓醫師註冊院後端帳號，或在帳號管理中核准後再排班。</div>`}
+      <form id="manualDutyForm" class="grid three">
+        <label>院後端醫師
+          <select name="userId" required>
+            <option value="">請選擇已註冊醫師</option>
+            ${hospitalDoctors().map((doctor) => `<option value="${doctor.id}">${doctor.name} / ${hospitalName(doctor.hospitalId)} / ${departmentName(doctor.departmentId)}</option>`).join("")}
+          </select>
+        </label>
+        <label>值班日期<input name="dutyDate" type="date" value="${today()}" required /></label>
+        <label>開始時間<input name="dutyStart" type="time" value="08:00" /></label>
+        <label>結束時間<input name="dutyEnd" type="time" value="17:00" /></label>
+        <button type="submit">加入值班</button>
+      </form>
+      <div class="notice">排班只從已核准的院後端醫師帳號選取；醫院與科別會沿用該醫師帳號資料。跨午夜班可直接輸入例如 20:00 到 08:00。</div>
+      <label>CSV 匯入<textarea id="scheduleCsv">${sampleCsv()}</textarea></label>
+      <label>AI 輔助判讀 Excel<input id="excelSchedule" type="file" accept=".xlsx,.xls,.csv" /></label>
+      <div class="notice">目前 Demo 可先上傳檔案並產生預覽區；正式版會將 Excel 送到後端/AI 解析後，再由管理者確認匯入。</div>
+      <div id="excelPreview" class="small muted">尚未上傳 Excel 班表。</div>
+      <button id="importSchedule">匯入班表</button>
+      <div class="list">${state.onDuty.filter((duty) => duty.dutyDate === today()).map(renderDutyAdmin).join("") || `<div class="muted">今日尚無班表</div>`}</div>
+    </section>
+  `;
+}
+
+function renderAdminRecordsPanel() {
+  return `
+    <section class="panel wide-panel">
+      <h2>後台紀錄</h2>
+      <div class="list">${state.alerts.slice().reverse().map(renderAdminAlertRecord).join("") || `<div class="muted">尚無通報</div>`}</div>
+    </section>
+  `;
+}
+
+function renderRecentAdminRecordsPanel(limit) {
+  const alerts = state.alerts.slice().reverse().slice(0, limit);
+  return `
+    <section class="panel">
+      <h2>近期通報</h2>
+      <div class="list">${alerts.length ? alerts.map(renderAdminAlertRecord).join("") : `<div class="muted">尚無通報</div>`}</div>
     </section>
   `;
 }
@@ -1238,6 +1334,10 @@ function bindHospitalUser() {
 }
 
 function bindAdmin() {
+  document.querySelectorAll("[data-admin-page]").forEach((button) => button.addEventListener("click", () => {
+    adminPage = button.dataset.adminPage;
+    render();
+  }));
   document.querySelectorAll(".approve-user").forEach((button) => button.addEventListener("click", () => {
     const user = userById(button.dataset.id);
     user.approved = !user.approved;
