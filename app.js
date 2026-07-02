@@ -762,6 +762,8 @@ function renderDashboard() {
 
 function renderPrehospitalHome() {
   const myAlerts = state.alerts.filter((alert) => alert.sender.userId === session.id).slice().reverse();
+  const recentAlerts = myAlerts.slice(0, 2);
+  const historyAlerts = myAlerts.slice(2);
   return `
     <section class="grid two">
       <section class="panel">
@@ -771,7 +773,11 @@ function renderPrehospitalHome() {
       </section>
       <section class="panel">
         <div class="toolbar"><h2>我的通報紀錄</h2><button class="secondary" id="refresh">更新</button></div>
-        <div class="list">${myAlerts.length ? myAlerts.map(renderAlertCard).join("") : `<div class="muted">尚無通報</div>`}</div>
+        <div class="list">${recentAlerts.length ? recentAlerts.map(renderAlertCard).join("") : `<div class="muted">尚無通報</div>`}</div>
+      </section>
+      <section class="panel">
+        <h2>歷史通報</h2>
+        <div class="list">${historyAlerts.length ? historyAlerts.map(renderAlertCard).join("") : `<div class="muted">尚無歷史通報</div>`}</div>
       </section>
       ${renderStatsPanel("我的通報統計", myAlerts)}
     </section>
