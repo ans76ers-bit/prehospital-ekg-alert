@@ -96,6 +96,8 @@ let pendingDeletedDutyIds = [];
 let authMessage = "";
 let dutyRosterDate = today();
 let dutyHospitalFilter = "all";
+let alertAudioUnlocked = false;
+const notifiedAlertIds = new Set();
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -421,7 +423,7 @@ function recipientsFor(hospitalId, departments) {
 function createAlert({ typeId, hospitalId, extra, image }) {
   const type = alertType(typeId);
   const recipients = recipientsFor(hospitalId, type.routeDepartments);
-  state.alerts.push({
+  const alert = {
     id: uid("alert"),
     typeId,
     hospitalId,
@@ -444,8 +446,11 @@ function createAlert({ typeId, hospitalId, extra, image }) {
     createdAt: nowText(),
     createdMs: Date.now(),
     audit: [`${nowText()} ${session.name} 發起 ${type.name} 通報，後送 ${hospitalName(hospitalId)}`],
-  });
+  };
+  alert.audit.push(recipients.length ? `通知對象：${recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、")}` : "沒有符合目前值班條件的接收者");
+  state.alerts.push(alert);
   saveState();
+  return alert;
 }
 
 function statusText(status) {
@@ -499,6 +504,12 @@ async function pollServerState() {
 function isOnline(user) {
   if (!user.lastSeenMs) return false;
   return Date.now() - user.lastSeenMs < 5 * 60 * 1000;
+}
+
+function userOnlineText(userId) {
+  const user = userById(userId);
+  if (!user) return "未登入";
+  return isOnline(user) ? "在線" : `未在線${user.lastSeenAt ? `，最後在線 ${user.lastSeenAt}` : ""}`;
 }
 
 function touchCurrentUser(markLogin = false) {
@@ -795,6 +806,7 @@ function renderTypeFlow(typeId) {
 function renderAlertCard(alert) {
   const type = alertType(alert.typeId);
   const accepted = alert.acceptedBy ? userById(alert.acceptedBy) : null;
+  const recipientText = alert.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}（${userOnlineText(recipient.userId)}）`).join("、") || "無";
   return `
     <article class="item ${alert.status === "notified" ? "critical" : ""}">
       <div class="item-head">
@@ -806,7 +818,7 @@ function renderAlertCard(alert) {
       </div>
       <div class="meta">
         <span>接收：${accepted ? accepted.name : "尚未"}</span>
-        <span>通知：${alert.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、") || "無"}</span>
+        <span>通知：${recipientText}</span>
       </div>
       ${alert.response ? `<div class="${alert.response === "啟動" ? "result-stemi" : "result-non"}">回覆：${alert.response}</div>` : ""}
       <div class="actions"><button class="secondary view-alert" data-id="${alert.id}">檢視</button></div>
@@ -816,8 +828,9 @@ function renderAlertCard(alert) {
 
 function renderHospitalUser() {
   const relevant = hospitalRelevantAlerts().slice().reverse();
-  const ringing = relevant.some((alert) => alert.status === "notified");
-  if (ringing) startAlarm();
+  const pendingAlerts = relevant.filter((alert) => alert.status === "notified");
+  const ringing = pendingAlerts.length > 0;
+  if (ringing) triggerAlertReminders(pendingAlerts);
   return `
     <section class="grid two">
       <section class="panel">
@@ -826,6 +839,8 @@ function renderHospitalUser() {
           ${ringing ? `<span class="status alert">持續提醒</span>` : `<span class="status done">無待接收</span>`}
         </div>
         <div class="meta"><span>${hospitalName(session.hospitalId)}</span><span>${departmentName(session.departmentId)}</span><span>${session.phone}</span></div>
+        <div class="notice">${reminderStatusText()}</div>
+        <div class="actions"><button type="button" class="secondary" id="enableAlerts">啟用鈴聲震動</button></div>
         <div class="list">${relevant.length ? relevant.map(renderHospitalAlert).join("") : `<div class="muted">目前沒有派送給你的通報</div>`}</div>
       </section>
       <section class="panel">
@@ -1181,6 +1196,7 @@ function roleAfterAdminRevoked(user) {
 function renderAdminAlertRecord(alert) {
   const acceptedUser = alert.acceptedBy ? userById(alert.acceptedBy) : null;
   const responseUser = alert.respondedBy ? userById(alert.respondedBy) : acceptedUser;
+  const recipientText = alert.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}（${userOnlineText(recipient.userId)}）`).join("、") || "無";
   return `
     <article class="item">
       <div class="item-head">
@@ -1192,6 +1208,7 @@ function renderAdminAlertRecord(alert) {
         <span>發送人：${alert.sender.name}</span>
         <span>發送時間：${alert.createdAt}</span>
       </div>
+      <div class="meta"><span>通知名單：${recipientText}</span></div>
       <div class="meta">
         <span>接收醫師：${acceptedUser?.name || "尚未"}</span>
         <span>接收時間：${alert.acceptedAt || "尚未"}</span>
@@ -1406,7 +1423,12 @@ function bindPrehospital() {
     if (data.decision === "否") return alert("已選擇不通報，未送出通知。");
     if (data.strokeWindow?.includes(">=12")) return alert("最後正常時間已超過 12 小時，Demo 依規則不送出通報。");
     const extra = buildExtra(data, type);
-    createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: data.typeId === "stemi" ? uploadImage : "" });
+    const alertRecord = createAlert({ typeId: data.typeId, hospitalId: data.hospitalId, extra, image: data.typeId === "stemi" ? uploadImage : "" });
+    if (alertRecord.recipients.length) {
+      window.alert(`已通知：${alertRecord.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}`).join("、")}。對方需登入並開啟院後端頁面，且先啟用鈴聲震動，手機才會即時響鈴。`);
+    } else {
+      window.alert("沒有找到目前值班且符合科別的接收者，請確認管理者頁面的值班日期、時間、醫院與科別。");
+    }
     uploadImage = "";
     view = session.role === "admin" ? "adminPrehospital" : "dashboard";
     render();
@@ -1441,6 +1463,7 @@ function buildExtra(data, type) {
 }
 
 function bindHospitalUser() {
+  document.querySelector("#enableAlerts")?.addEventListener("click", () => enableAlertReminders());
   document.querySelectorAll(".accept-alert").forEach((button) => button.addEventListener("click", () => {
     const item = state.alerts.find((alert) => alert.id === button.dataset.id);
     if (!item || item.status !== "notified") return;
@@ -1667,12 +1690,84 @@ function bindModal() {
   });
 }
 
+function audioContextCtor() {
+  return window.AudioContext || window.webkitAudioContext;
+}
+
+async function ensureAudioContext() {
+  const Ctor = audioContextCtor();
+  if (!Ctor) return false;
+  audio.context = audio.context || new Ctor();
+  if (audio.context.state === "suspended") await audio.context.resume();
+  alertAudioUnlocked = audio.context.state === "running";
+  return alertAudioUnlocked;
+}
+
+async function enableAlertReminders() {
+  await ensureAudioContext();
+  if ("Notification" in window && Notification.permission === "default") {
+    try {
+      await Notification.requestPermission();
+    } catch {}
+  }
+  if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+  try {
+    await playAlertTone();
+  } catch {}
+  render();
+}
+
+function reminderStatusText() {
+  const notificationText = "Notification" in window ? `通知權限：${Notification.permission === "granted" ? "已允許" : Notification.permission === "denied" ? "已封鎖" : "尚未允許"}` : "此瀏覽器不支援通知";
+  const audioText = alertAudioUnlocked ? "提醒音：已啟用" : "提醒音：請先點啟用";
+  return `${audioText}；${notificationText}。手機需保持登入並開啟此頁，才能即時響鈴震動。`;
+}
+
+async function showDeviceNotification(alert) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const title = `${alertType(alert.typeId)?.name || alert.typeId} 通報`;
+  const body = `${hospitalName(alert.hospitalId)} / ${stationName(alert.sender.stationId)} / ${alert.sender.phone}`;
+  try {
+    if (navigator.serviceWorker?.ready) {
+      const registration = await navigator.serviceWorker.ready;
+      registration.showNotification(title, { body, tag: alert.id, requireInteraction: true, vibrate: [600, 180, 600, 180, 600] });
+      return;
+    }
+  } catch {}
+  try {
+    new Notification(title, { body, tag: alert.id, requireInteraction: true });
+  } catch {}
+}
+
+function triggerAlertReminders(alerts) {
+  startAlarm();
+  alerts.forEach((alert) => {
+    if (notifiedAlertIds.has(alert.id)) return;
+    notifiedAlertIds.add(alert.id);
+    showDeviceNotification(alert);
+  });
+}
+
+async function playAlertTone() {
+  const unlocked = await ensureAudioContext();
+  if (!unlocked) return;
+  const oscillator = audio.context.createOscillator();
+  const gain = audio.context.createGain();
+  oscillator.frequency.value = 880;
+  gain.gain.value = 0.08;
+  oscillator.connect(gain);
+  gain.connect(audio.context.destination);
+  oscillator.start();
+  window.setTimeout(() => oscillator.stop(), 220);
+}
+
 function startAlarm() {
   if (audio.timer) return;
-  const play = () => {
+  const play = async () => {
     try {
       if (navigator.vibrate) navigator.vibrate([500, 180, 500]);
-      audio.context = audio.context || new AudioContext();
+      const unlocked = await ensureAudioContext();
+      if (!unlocked) return;
       audio.oscillator = audio.context.createOscillator();
       const gain = audio.context.createGain();
       audio.oscillator.frequency.value = 880;
