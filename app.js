@@ -104,6 +104,7 @@ let dutyRosterDate = today();
 let dutyHospitalFilter = "all";
 let alertAudioUnlocked = false;
 let alertComposerMessage = "";
+let historyExpanded = false;
 const notifiedAlertIds = new Set();
 const ALERT_VIBRATION_PATTERN = [900, 180, 900, 180, 1400, 240, 900];
 
@@ -791,8 +792,11 @@ function renderPrehospitalHome() {
         <div class="list">${recentAlerts.length ? recentAlerts.map(renderAlertCard).join("") : `<div class="muted">尚無通報</div>`}</div>
       </section>
       <section class="panel">
-        <h2>歷史通報</h2>
-        <div class="list">${historyAlerts.length ? historyAlerts.map(renderAlertCard).join("") : `<div class="muted">尚無歷史通報</div>`}</div>
+        <div class="toolbar">
+          <h2>歷史通報</h2>
+          <button type="button" class="secondary" id="toggleHistoryAlerts">${historyExpanded ? "收合" : "展開"} ${historyAlerts.length} 筆</button>
+        </div>
+        ${historyExpanded ? `<div class="list">${historyAlerts.length ? historyAlerts.map(renderAlertCard).join("") : `<div class="muted">尚無歷史通報</div>`}</div>` : `<div class="muted">已收合 ${historyAlerts.length} 筆歷史通報</div>`}
       </section>
       ${renderStatsPanel("我的通報統計", myAlerts)}
     </section>
@@ -1502,6 +1506,10 @@ function bindCommon() {
     render();
   });
   document.querySelector("#refresh")?.addEventListener("click", () => pollServerState());
+  document.querySelector("#toggleHistoryAlerts")?.addEventListener("click", () => {
+    historyExpanded = !historyExpanded;
+    render();
+  });
   document.querySelectorAll(".view-alert").forEach((button) => button.addEventListener("click", () => {
     selectedAlertId = button.dataset.id;
     render();
