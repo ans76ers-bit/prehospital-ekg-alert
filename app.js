@@ -460,6 +460,7 @@ function statusText(status) {
     activated: "已啟動",
     declined: "不啟動",
     callback: "回撥電話",
+    canceled: "已取消",
     "no-duty": "無當班人員",
   }[status] || status;
 }
@@ -471,6 +472,7 @@ function statusClass(status) {
     activated: "done",
     declined: "done",
     callback: "done",
+    canceled: "done",
     "no-duty": "alert",
   }[status] || "pending";
 }
@@ -807,6 +809,7 @@ function renderAlertCard(alert) {
   const type = alertType(alert.typeId);
   const accepted = alert.acceptedBy ? userById(alert.acceptedBy) : null;
   const recipientText = alert.recipients.map((recipient) => `${recipient.name}/${departmentName(recipient.departmentId)}（${userOnlineText(recipient.userId)}）`).join("、") || "無";
+  const canCancel = alert.sender.userId === session.id && ["notified", "accepted", "no-duty"].includes(alert.status);
   return `
     <article class="item ${alert.status === "notified" ? "critical" : ""}">
       <div class="item-head">
@@ -821,7 +824,10 @@ function renderAlertCard(alert) {
         <span>通知：${recipientText}</span>
       </div>
       ${alert.response ? `<div class="${alert.response === "啟動" ? "result-stemi" : "result-non"}">回覆：${alert.response}</div>` : ""}
-      <div class="actions"><button class="secondary view-alert" data-id="${alert.id}">檢視</button></div>
+      <div class="actions">
+        <button class="secondary view-alert" data-id="${alert.id}">檢視</button>
+        ${canCancel ? `<button class="danger cancel-alert" data-id="${alert.id}">取消通報</button>` : ""}
+      </div>
     </article>
   `;
 }
@@ -1379,6 +1385,17 @@ function bindCommon() {
   document.querySelector("#refresh")?.addEventListener("click", () => pollServerState());
   document.querySelectorAll(".view-alert").forEach((button) => button.addEventListener("click", () => {
     selectedAlertId = button.dataset.id;
+    render();
+  }));
+  document.querySelectorAll(".cancel-alert").forEach((button) => button.addEventListener("click", () => {
+    const item = state.alerts.find((alert) => alert.id === button.dataset.id);
+    if (!item || item.sender.userId !== session.id || !["notified", "accepted", "no-duty"].includes(item.status)) return;
+    if (!confirm(`確定要取消 ${alertType(item.typeId)?.name || item.typeId} 通報嗎？取消後院後端將不再提醒。`)) return;
+    item.status = "canceled";
+    item.canceledBy = session.id;
+    item.canceledAt = nowText();
+    item.audit.push(`${nowText()} ${session.name} 取消通報`);
+    saveState();
     render();
   }));
 }
