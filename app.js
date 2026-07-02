@@ -1157,11 +1157,12 @@ function bindPublic() {
     view = button.dataset.view;
     render();
   }));
-  document.querySelector("#loginForm")?.addEventListener("submit", (event) => {
+  document.querySelector("#loginForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    await loadStateFromServer();
     const data = new FormData(event.currentTarget);
-    const phone = data.get("phone");
-    const password = data.get("password");
+    const phone = String(data.get("phone") || "").trim();
+    const password = String(data.get("password") || "").trim();
     const user = state.users.find((item) => item.phone === phone && item.approved && (item.password || item.phone) === password);
     if (!user) return alert("找不到已核准帳號。請使用測試帳號或先由管理者核准。");
     session = structuredClone(user);
