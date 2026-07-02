@@ -444,9 +444,9 @@ function isEditingField() {
 
 async function pollServerState() {
   if (!session) return;
-  touchCurrentUser();
   const before = JSON.stringify(state);
   const loaded = await loadStateFromServer();
+  touchCurrentUser();
   if (loaded && JSON.stringify(state) !== before && !isEditingField()) render();
 }
 
@@ -1176,7 +1176,7 @@ function bindPublic() {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     data.password = data.password || data.phone;
-    state.users.push({ id: uid("u"), approved: false, ...data });
+    state.users.push({ id: uid("u"), ...data, approved: false });
     saveState();
     alert("已送出註冊申請，需管理者核准。");
     view = "home";
