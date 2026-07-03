@@ -1284,8 +1284,8 @@ function renderDepartmentDutySection(hospitalId, department) {
 
 function renderAdminRecordsPanel() {
   const alerts = state.alerts.slice().reverse();
-  const recentAlerts = alerts.slice(0, 8);
-  const historyAlerts = alerts.slice(8);
+  const recentAlerts = alerts.slice(0, 3);
+  const historyAlerts = alerts.slice(3);
   return `
     <section class="panel wide-panel">
       <div class="toolbar">
