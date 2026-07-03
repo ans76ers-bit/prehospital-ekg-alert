@@ -114,7 +114,8 @@ let statsRange = {
   end: today(),
 };
 const notifiedAlertIds = new Set();
-const ALERT_VIBRATION_PATTERN = [900, 180, 900, 180, 1400, 240, 900];
+const ALERT_CHANNEL_ID = "critical-alerts-fire-v2";
+const ALERT_VIBRATION_PATTERN = [900, 120, 900, 120, 900, 120, 1600, 180, 1200];
 
 function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -2155,7 +2156,7 @@ async function prepareNativeAlertChannel() {
   } catch {}
   try {
     await LocalNotifications.createChannel({
-      id: "critical-alerts",
+      id: ALERT_CHANNEL_ID,
       name: "急重症通報",
       description: "院前 EKG 與急重症通報提醒",
       importance: 5,
@@ -2184,7 +2185,7 @@ async function showNativeNotification(alert) {
           id: numericAlertId(alert.id),
           title,
           body,
-          channelId: "critical-alerts",
+          channelId: ALERT_CHANNEL_ID,
           sound: "ems_alert.wav",
           ongoing: true,
           autoCancel: false,
@@ -2222,27 +2223,44 @@ function triggerAlertReminders(alerts) {
 }
 
 async function playAlertTone() {
-  await playSirenTone(850);
+  await playSirenTone(1600);
 }
 
-async function playSirenTone(durationMs = 1100) {
+async function playSirenTone(durationMs = 1800) {
   const unlocked = await ensureAudioContext();
   if (!unlocked) return;
-  const oscillator = audio.context.createOscillator();
+  const carrier = audio.context.createOscillator();
+  const harmonic = audio.context.createOscillator();
   const gain = audio.context.createGain();
+  const limiter = audio.context.createDynamicsCompressor();
   const now = audio.context.currentTime;
-  oscillator.type = "sawtooth";
+  const duration = durationMs / 1000;
+  carrier.type = "square";
+  harmonic.type = "sawtooth";
+  limiter.threshold.setValueAtTime(-10, now);
+  limiter.knee.setValueAtTime(4, now);
+  limiter.ratio.setValueAtTime(12, now);
+  limiter.attack.setValueAtTime(0.003, now);
+  limiter.release.setValueAtTime(0.16, now);
   gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.24, now + 0.04);
-  for (let i = 0; i < 8; i += 1) {
-    const t = now + i * 0.14;
-    oscillator.frequency.setValueAtTime(i % 2 === 0 ? 620 : 980, t);
+  for (let i = 0; i < 12; i += 1) {
+    const t = now + i * 0.15;
+    const on = i % 3 !== 2;
+    const freq = i % 2 === 0 ? 720 : 1180;
+    carrier.frequency.setValueAtTime(freq, t);
+    harmonic.frequency.setValueAtTime(freq * 1.5, t);
+    gain.gain.cancelAndHoldAtTime?.(t);
+    gain.gain.setTargetAtTime(on ? 0.32 : 0.0001, t, 0.018);
   }
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + durationMs / 1000);
-  oscillator.connect(gain);
-  gain.connect(audio.context.destination);
-  oscillator.start(now);
-  oscillator.stop(now + durationMs / 1000);
+  gain.gain.setTargetAtTime(0.0001, now + duration - 0.08, 0.025);
+  carrier.connect(gain);
+  harmonic.connect(gain);
+  gain.connect(limiter);
+  limiter.connect(audio.context.destination);
+  carrier.start(now);
+  harmonic.start(now);
+  carrier.stop(now + duration);
+  harmonic.stop(now + duration);
 }
 
 function startAlarm() {
@@ -2251,17 +2269,17 @@ function startAlarm() {
     try {
       if (navigator.vibrate) navigator.vibrate(ALERT_VIBRATION_PATTERN);
       try {
-        await nativePlugins().Haptics?.vibrate?.({ duration: 1200 });
+        await nativePlugins().Haptics?.vibrate?.({ duration: 1800 });
       } catch {}
       const unlocked = await ensureAudioContext();
       if (!unlocked) return;
-      await playSirenTone(1200);
+      await playSirenTone(1800);
     } catch {
       stopAlarm();
     }
   };
   play();
-  audio.timer = window.setInterval(play, 1800);
+  audio.timer = window.setInterval(play, 2100);
 }
 
 function stopAlarmIfNotNeeded() {
