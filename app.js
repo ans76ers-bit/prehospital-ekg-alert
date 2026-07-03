@@ -108,9 +108,9 @@ let historyExpanded = false;
 let hospitalHistoryExpanded = false;
 let adminRecordsExpanded = false;
 let statsRange = {
-  mode: "month",
-  start: "",
-  end: "",
+  typeId: "all",
+  start: monthStart(),
+  end: today(),
 };
 const notifiedAlertIds = new Set();
 const ALERT_VIBRATION_PATTERN = [900, 180, 900, 180, 1400, 240, 900];
@@ -408,19 +408,11 @@ function yearStart(date = new Date()) {
 }
 
 function statsRangeBounds() {
-  const now = new Date();
-  if (statsRange.mode === "all") return { start: "", end: "", label: "全部期間" };
-  if (statsRange.mode === "quarter") return { start: quarterStart(now), end: today(), label: "本季" };
-  if (statsRange.mode === "half") return { start: addMonths(today(), -6), end: today(), label: "近半年" };
-  if (statsRange.mode === "year") return { start: yearStart(now), end: today(), label: "今年" };
-  if (statsRange.mode === "custom") {
-    return {
-      start: statsRange.start || "",
-      end: statsRange.end || "",
-      label: `${statsRange.start || "未設定"} 至 ${statsRange.end || "未設定"}`,
-    };
-  }
-  return { start: monthStart(now), end: today(), label: "本月" };
+  return {
+    start: statsRange.start || "",
+    end: statsRange.end || "",
+    label: `${statsRange.start || "未設定"} 至 ${statsRange.end || "未設定"}`,
+  };
 }
 
 function alertDateKey(alert) {
@@ -433,6 +425,7 @@ function alertDateKey(alert) {
 function alertsInStatsRange(alerts) {
   const { start, end } = statsRangeBounds();
   return alerts.filter((alert) => {
+    if (statsRange.typeId !== "all" && alert.typeId !== statsRange.typeId) return false;
     const created = alertDateKey(alert);
     if (!created) return true;
     if (start && created < start) return false;
@@ -908,28 +901,22 @@ function renderStatsPanel(title, alerts) {
   const filteredAlerts = alertsInStatsRange(alerts);
   const stats = statsFor(filteredAlerts);
   const range = statsRangeBounds();
-  const rangeOptions = [
-    ["month", "本月"],
-    ["quarter", "本季"],
-    ["half", "近半年"],
-    ["year", "今年"],
-    ["all", "全部"],
-    ["custom", "自訂"],
-  ];
+  const typeOptions = [["all", "全部重症"], ...state.alertTypes.map((type) => [type.id, type.name])];
+  const typeLabel = typeOptions.find(([value]) => value === statsRange.typeId)?.[1] || "全部重症";
   return `
     <section class="panel">
       <div class="toolbar">
         <h2>${title}</h2>
-        <span class="status opened">${range.label}</span>
+        <span class="status opened">${typeLabel} / ${range.label}</span>
       </div>
       <div class="grid three compact-controls">
-        <label>統計區間
-          <select id="statsRangeMode">
-            ${rangeOptions.map(([value, label]) => `<option value="${value}" ${statsRange.mode === value ? "selected" : ""}>${label}</option>`).join("")}
+        <label>重症類別
+          <select id="statsTypeFilter">
+            ${typeOptions.map(([value, label]) => `<option value="${value}" ${statsRange.typeId === value ? "selected" : ""}>${label}</option>`).join("")}
           </select>
         </label>
-        <label>開始日期<input id="statsRangeStart" type="date" value="${statsRange.start || range.start}" ${statsRange.mode === "custom" ? "" : "disabled"} /></label>
-        <label>結束日期<input id="statsRangeEnd" type="date" value="${statsRange.end || range.end}" ${statsRange.mode === "custom" ? "" : "disabled"} /></label>
+        <label>開始日期<input id="statsRangeStart" type="date" value="${statsRange.start || range.start}" /></label>
+        <label>結束日期<input id="statsRangeEnd" type="date" value="${statsRange.end || range.end}" /></label>
       </div>
       <div class="notice">成功率目前以「成功啟動案件 / 總通報案件」計算；目前納入 ${filteredAlerts.length} / ${alerts.length} 筆。</div>
       <div class="table">
@@ -1640,25 +1627,15 @@ function bindAdminModeSwitch() {
 }
 
 function bindStatsRangeControls() {
-  document.querySelectorAll("#statsRangeMode").forEach((select) => select.addEventListener("change", (event) => {
-    statsRange.mode = event.currentTarget.value;
-    if (statsRange.mode !== "custom") {
-      statsRange.start = "";
-      statsRange.end = "";
-    } else {
-      const bounds = statsRangeBounds();
-      statsRange.start = statsRange.start || bounds.start || monthStart();
-      statsRange.end = statsRange.end || bounds.end || today();
-    }
+  document.querySelectorAll("#statsTypeFilter").forEach((select) => select.addEventListener("change", (event) => {
+    statsRange.typeId = event.currentTarget.value || "all";
     render();
   }));
   document.querySelectorAll("#statsRangeStart").forEach((input) => input.addEventListener("change", (event) => {
-    statsRange.mode = "custom";
     statsRange.start = event.currentTarget.value;
     render();
   }));
   document.querySelectorAll("#statsRangeEnd").forEach((input) => input.addEventListener("change", (event) => {
-    statsRange.mode = "custom";
     statsRange.end = event.currentTarget.value;
     render();
   }));
