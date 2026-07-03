@@ -648,7 +648,7 @@ function render() {
   document.querySelector("#app").innerHTML = session ? renderShell() : renderPublic();
   bindCommon();
   if (!session) bindPublic();
-  if (session?.role === "prehospital" || (session?.role === "admin" && ["adminPrehospital", "alert"].includes(view))) bindPrehospital();
+  if (session?.role === "prehospital" || (session?.role === "admin" && ["adminPrehospital", "alertType", "alert"].includes(view))) bindPrehospital();
   if (session?.role === "hospital" || (session?.role === "admin" && view === "adminHospital")) bindHospitalUser();
   if (session?.role === "admin") {
     bindAdmin();
@@ -810,9 +810,9 @@ function adminModeLabel() {
 function renderAdminModeTabs() {
   return `
     <nav class="tabs admin-tabs">
-      <button type="button" class="${view === "adminPrehospital" || view === "alert" ? "active" : ""}" data-admin-view="adminPrehospital">院前端測試</button>
+      <button type="button" class="${["adminPrehospital", "alertType", "alert"].includes(view) ? "active" : ""}" data-admin-view="adminPrehospital">院前端測試</button>
       <button type="button" class="${view === "adminHospital" ? "active" : ""}" data-admin-view="adminHospital">院後端測試</button>
-      <button type="button" class="${!["adminPrehospital", "adminHospital", "alert", "profile"].includes(view) ? "active" : ""}" data-admin-view="dashboard">管理頁面</button>
+      <button type="button" class="${!["adminPrehospital", "adminHospital", "alertType", "alert", "profile"].includes(view) ? "active" : ""}" data-admin-view="dashboard">管理頁面</button>
     </nav>
   `;
 }
