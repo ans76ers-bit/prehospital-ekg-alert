@@ -2,10 +2,14 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import json
 import os
+import time
 
 ROOT = Path(__file__).resolve().parent
 DATA_FILE = Path(os.environ.get("APP_STATE_FILE", ROOT / "data" / "app_state.json"))
 DATABASE_URL = os.environ.get("DATABASE_URL")
+FIREBASE_SERVICE_ACCOUNT_JSON = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+FIREBASE_CREDENTIALS_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "")
 DEMO_USER_IDS = {"u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"}
 DEMO_PHONES = {"0900000000", "0911000001", "0912000001", "0912000002", "0912000003", "0912000004", "0912000005"}
 MAX_ALERT_IMAGE_CHARS = 650000
@@ -29,6 +33,8 @@ ALERT_PROGRESS_FIELDS = {
     "canceledBy",
     "canceledAt",
 }
+_firebase_init_attempted = False
+_firebase_ready = False
 
 
 def compact_alert_images(state):
@@ -146,6 +152,170 @@ def db_connect():
     return psycopg.connect(DATABASE_URL)
 
 
+def ensure_firebase():
+    global _firebase_init_attempted, _firebase_ready
+    if _firebase_init_attempted:
+        return _firebase_ready
+    _firebase_init_attempted = True
+    if not FIREBASE_SERVICE_ACCOUNT_JSON and not FIREBASE_CREDENTIALS_FILE:
+        print("Firebase push disabled: missing FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS")
+        return False
+    try:
+        import firebase_admin
+        from firebase_admin import credentials
+
+        if firebase_admin._apps:
+            _firebase_ready = True
+            return True
+        if FIREBASE_SERVICE_ACCOUNT_JSON:
+            service_account = json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
+            cred = credentials.Certificate(service_account)
+        else:
+            cred = credentials.Certificate(FIREBASE_CREDENTIALS_FILE)
+        options = {"projectId": FIREBASE_PROJECT_ID} if FIREBASE_PROJECT_ID else None
+        firebase_admin.initialize_app(cred, options)
+        _firebase_ready = True
+        print("Firebase push enabled")
+        return True
+    except Exception as exc:
+        print(f"Firebase push disabled: {exc}")
+        _firebase_ready = False
+        return False
+
+
+def user_push_tokens(user):
+    tokens = []
+    for item in user.get("pushTokens", []) or []:
+        token = item.get("token") if isinstance(item, dict) else item
+        if token and token not in tokens:
+            tokens.append(token)
+    legacy_token = user.get("pushToken")
+    if legacy_token and legacy_token not in tokens:
+        tokens.append(legacy_token)
+    return tokens
+
+
+def push_targets_for_alert(state, alert):
+    users_by_id = {user.get("id"): user for user in state.get("users", []) if user.get("id")}
+    targets = []
+    for recipient in alert.get("recipients", []) or []:
+        user = users_by_id.get(recipient.get("userId"))
+        if not user:
+            continue
+        for token in user_push_tokens(user):
+            targets.append({
+                "token": token,
+                "userId": user.get("id"),
+                "name": user.get("name", ""),
+            })
+    deduped = {}
+    for target in targets:
+        deduped[target["token"]] = target
+    return list(deduped.values())
+
+
+def alert_type_name(state, type_id):
+    for item in state.get("alertTypes", []) or []:
+        if item.get("id") == type_id:
+            return item.get("name") or type_id
+    return type_id or "急重症"
+
+
+def hospital_name(state, hospital_id):
+    for item in state.get("hospitals", []) or []:
+        if item.get("id") == hospital_id:
+            return item.get("name") or hospital_id
+    return hospital_id or "後送醫院"
+
+
+def station_name(state, station_id):
+    for item in state.get("stations", []) or []:
+        if item.get("id") == station_id:
+            return item.get("name") or station_id
+    return station_id or "院前端"
+
+
+def send_push_for_alert(state, alert):
+    if alert.get("status") != "notified":
+        return {"sent": 0, "skipped": "alert-not-notified"}
+    targets = push_targets_for_alert(state, alert)
+    if not targets:
+        return {"sent": 0, "skipped": "no-device-token"}
+    if not ensure_firebase():
+        return {"sent": 0, "skipped": "firebase-not-configured"}
+    from firebase_admin import messaging
+
+    type_name = alert_type_name(state, alert.get("typeId"))
+    sender = alert.get("sender", {}) or {}
+    title = f"{type_name} 急重症通報"
+    body = f"{hospital_name(state, alert.get('hospitalId'))} / {station_name(state, sender.get('stationId'))} / {sender.get('phone', '')}"
+    sent = 0
+    failed = 0
+    for target in targets:
+        message = messaging.Message(
+            token=target["token"],
+            notification=messaging.Notification(title=title, body=body),
+            data={
+                "alertId": str(alert.get("id", "")),
+                "typeId": str(alert.get("typeId", "")),
+                "hospitalId": str(alert.get("hospitalId", "")),
+                "url": "https://prehospital-critical-alert-test.onrender.com",
+            },
+            android=messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    channel_id="critical-alerts-fire-v2",
+                    sound="ems_alert.wav",
+                    tag=str(alert.get("id", "")),
+                    color="#0d766e",
+                ),
+            ),
+        )
+        try:
+            messaging.send(message)
+            sent += 1
+        except Exception as exc:
+            failed += 1
+            print(f"FCM send failed for {target.get('userId')}: {exc}")
+    return {"sent": sent, "failed": failed}
+
+
+def dispatch_new_alert_pushes(previous_state, next_state):
+    existing_ids = {alert.get("id") for alert in (previous_state or {}).get("alerts", []) if alert.get("id")}
+    for alert in next_state.get("alerts", []) or []:
+        if alert.get("id") in existing_ids:
+            continue
+        if alert.get("status") != "notified":
+            continue
+        result = send_push_for_alert(next_state, alert)
+        print(f"Push dispatch for {alert.get('id')}: {result}")
+
+
+def register_push_token(payload):
+    user_id = str(payload.get("userId", "")).strip()
+    token = str(payload.get("token", "")).strip()
+    platform = str(payload.get("platform", "android")).strip() or "android"
+    if not user_id or not token:
+        raise ValueError("missing userId or token")
+    state = read_state()
+    if not state:
+        raise ValueError("state not initialized")
+    now_ms = int(time.time() * 1000)
+    updated = False
+    for user in state.get("users", []) or []:
+        if user.get("id") != user_id:
+            continue
+        tokens = [item for item in (user.get("pushTokens") or []) if isinstance(item, dict) and item.get("token") != token]
+        tokens.insert(0, {"token": token, "platform": platform, "updatedAt": now_ms})
+        user["pushTokens"] = tokens[:5]
+        updated = True
+        break
+    if not updated:
+        raise ValueError("user not found")
+    write_state(state)
+    return {"ok": True, "tokenCount": len(tokens)}
+
+
 def read_persisted_state():
     if DATABASE_URL:
         with db_connect() as conn:
@@ -204,9 +374,11 @@ def write_state(state, deleted_user_ids=None, deleted_duty_ids=None):
                     ("main", json.dumps(state, ensure_ascii=False)),
                 )
             conn.commit()
+        dispatch_new_alert_pushes(current or {}, state)
         return
     DATA_FILE.parent.mkdir(exist_ok=True)
     DATA_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    dispatch_new_alert_pushes(current or {}, state)
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -244,6 +416,14 @@ class Handler(SimpleHTTPRequestHandler):
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 write_state(sanitize_state(payload), payload.get("deletedUserIds", []), payload.get("deletedDutyIds", []))
                 self._send_json({"ok": True})
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=500)
+            return
+        if self.path == "/api/push-token":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                self._send_json(register_push_token(payload))
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
             return

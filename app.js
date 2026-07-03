@@ -2,6 +2,7 @@ const STORAGE_KEY = "prehospital-critical-alert-test-v1";
 const SESSION_KEY = "prehospital-critical-alert-session-v2";
 const REMEMBER_KEY = "prehospital-critical-alert-remember-v1";
 const API_STATE_URL = "./api/state";
+const API_PUSH_TOKEN_URL = "./api/push-token";
 const MAX_ALERT_IMAGE_CHARS = 650000;
 const ALERT_IMAGES_TO_KEEP = 3;
 const EKG_IMAGE_MAX_WIDTH = 900;
@@ -104,6 +105,7 @@ let authMessage = "";
 let dutyRosterDate = today();
 let dutyHospitalFilter = "all";
 let alertAudioUnlocked = false;
+let pushRegistrationStarted = false;
 let alertComposerMessage = "";
 let historyExpanded = false;
 let hospitalHistoryExpanded = false;
@@ -1588,6 +1590,7 @@ function bindPublic() {
     session = structuredClone(user);
     saveSession();
     touchCurrentUser(true);
+    registerNativePushToken();
     view = "dashboard";
     render();
   };
@@ -2102,6 +2105,7 @@ async function ensureAudioContext() {
 async function enableAlertReminders() {
   await ensureAudioContext();
   await prepareNativeAlertChannel();
+  await registerNativePushToken();
   if ("Notification" in window && Notification.permission === "default") {
     try {
       await Notification.requestPermission();
@@ -2142,6 +2146,57 @@ function nativePlugins() {
 
 function isNativeApp() {
   return Boolean(window.Capacitor?.isNativePlatform?.());
+}
+
+function nativePlatform() {
+  return window.Capacitor?.getPlatform?.() || "web";
+}
+
+async function sendPushTokenToServer(token) {
+  if (!session?.id || !token) return;
+  try {
+    await fetch(API_PUSH_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: session.id,
+        token,
+        platform: nativePlatform(),
+      }),
+    });
+  } catch {}
+}
+
+async function registerNativePushToken() {
+  if (!isNativeApp() || pushRegistrationStarted) return;
+  const { PushNotifications } = nativePlugins();
+  if (!PushNotifications) return;
+  pushRegistrationStarted = true;
+  try {
+    await PushNotifications.requestPermissions();
+  } catch {}
+  try {
+    await PushNotifications.addListener("registration", (token) => {
+      sendPushTokenToServer(token?.value || token);
+    });
+    await PushNotifications.addListener("registrationError", (error) => {
+      console.warn("push registration failed", error);
+    });
+    await PushNotifications.addListener("pushNotificationReceived", async () => {
+      await loadStateFromServer();
+      const pending = hospitalRelevantAlerts().filter((alert) => alert.status === "notified");
+      if (pending.length) triggerAlertReminders(pending);
+      render();
+    });
+    await PushNotifications.addListener("pushNotificationActionPerformed", async () => {
+      await loadStateFromServer();
+      view = session?.role === "admin" ? "adminHospital" : "dashboard";
+      render();
+    });
+    await PushNotifications.register();
+  } catch {
+    pushRegistrationStarted = false;
+  }
 }
 
 function numericAlertId(alertId) {
@@ -2325,6 +2380,7 @@ async function initApp() {
     saveSession();
   }
   installReminderAutoUnlock();
+  registerNativePushToken();
   render();
   window.setInterval(pollServerState, 3000);
   window.setInterval(() => {
