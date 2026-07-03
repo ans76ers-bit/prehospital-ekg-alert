@@ -105,6 +105,13 @@ let dutyHospitalFilter = "all";
 let alertAudioUnlocked = false;
 let alertComposerMessage = "";
 let historyExpanded = false;
+let hospitalHistoryExpanded = false;
+let adminRecordsExpanded = false;
+let statsRange = {
+  mode: "month",
+  start: "",
+  end: "",
+};
 const notifiedAlertIds = new Set();
 const ALERT_VIBRATION_PATTERN = [900, 180, 900, 180, 1400, 240, 900];
 
@@ -380,6 +387,58 @@ function addDays(dateValue, days) {
   const date = new Date(`${dateValue}T00:00:00`);
   date.setDate(date.getDate() + days);
   return dateKey(date);
+}
+
+function addMonths(dateValue, months) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  date.setMonth(date.getMonth() + months);
+  return dateKey(date);
+}
+
+function monthStart(date = new Date()) {
+  return dateKey(new Date(date.getFullYear(), date.getMonth(), 1));
+}
+
+function quarterStart(date = new Date()) {
+  return dateKey(new Date(date.getFullYear(), Math.floor(date.getMonth() / 3) * 3, 1));
+}
+
+function yearStart(date = new Date()) {
+  return dateKey(new Date(date.getFullYear(), 0, 1));
+}
+
+function statsRangeBounds() {
+  const now = new Date();
+  if (statsRange.mode === "all") return { start: "", end: "", label: "全部期間" };
+  if (statsRange.mode === "quarter") return { start: quarterStart(now), end: today(), label: "本季" };
+  if (statsRange.mode === "half") return { start: addMonths(today(), -6), end: today(), label: "近半年" };
+  if (statsRange.mode === "year") return { start: yearStart(now), end: today(), label: "今年" };
+  if (statsRange.mode === "custom") {
+    return {
+      start: statsRange.start || "",
+      end: statsRange.end || "",
+      label: `${statsRange.start || "未設定"} 至 ${statsRange.end || "未設定"}`,
+    };
+  }
+  return { start: monthStart(now), end: today(), label: "本月" };
+}
+
+function alertDateKey(alert) {
+  if (alert.createdMs) return dateKey(new Date(alert.createdMs));
+  const matched = String(alert.createdAt || "").match(/\d{4}\/\d{1,2}\/\d{1,2}|\d{4}-\d{1,2}-\d{1,2}/);
+  if (!matched) return "";
+  return matched[0].replaceAll("/", "-").split("-").map((part, index) => (index === 0 ? part : part.padStart(2, "0"))).join("-");
+}
+
+function alertsInStatsRange(alerts) {
+  const { start, end } = statsRangeBounds();
+  return alerts.filter((alert) => {
+    const created = alertDateKey(alert);
+    if (!created) return true;
+    if (start && created < start) return false;
+    if (end && created > end) return false;
+    return true;
+  });
 }
 
 function dutyEndDate(duty) {
@@ -846,11 +905,33 @@ function statsFor(alerts) {
 }
 
 function renderStatsPanel(title, alerts) {
-  const stats = statsFor(alerts);
+  const filteredAlerts = alertsInStatsRange(alerts);
+  const stats = statsFor(filteredAlerts);
+  const range = statsRangeBounds();
+  const rangeOptions = [
+    ["month", "本月"],
+    ["quarter", "本季"],
+    ["half", "近半年"],
+    ["year", "今年"],
+    ["all", "全部"],
+    ["custom", "自訂"],
+  ];
   return `
     <section class="panel">
-      <h2>${title}</h2>
-      <div class="notice">成功率目前以「成功啟動案件 / 總通報案件」計算。</div>
+      <div class="toolbar">
+        <h2>${title}</h2>
+        <span class="status opened">${range.label}</span>
+      </div>
+      <div class="grid three compact-controls">
+        <label>統計區間
+          <select id="statsRangeMode">
+            ${rangeOptions.map(([value, label]) => `<option value="${value}" ${statsRange.mode === value ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </label>
+        <label>開始日期<input id="statsRangeStart" type="date" value="${statsRange.start || range.start}" ${statsRange.mode === "custom" ? "" : "disabled"} /></label>
+        <label>結束日期<input id="statsRangeEnd" type="date" value="${statsRange.end || range.end}" ${statsRange.mode === "custom" ? "" : "disabled"} /></label>
+      </div>
+      <div class="notice">成功率目前以「成功啟動案件 / 總通報案件」計算；目前納入 ${filteredAlerts.length} / ${alerts.length} 筆。</div>
       <div class="table">
         <div class="row header"><span>類別</span><span>總通報</span><span>啟動</span><span>成功率</span><span></span></div>
         ${stats.rows.map((row) => `
@@ -959,6 +1040,8 @@ function renderAlertCard(alert) {
 function renderHospitalUser() {
   const relevant = hospitalRelevantAlerts().slice().reverse();
   const pendingAlerts = relevant.filter((alert) => alert.status === "notified");
+  const recentAlerts = relevant.slice(0, 3);
+  const historyAlerts = relevant.slice(3);
   const ringing = pendingAlerts.length > 0;
   if (ringing) triggerAlertReminders(pendingAlerts);
   return `
@@ -970,7 +1053,14 @@ function renderHospitalUser() {
         </div>
         <div class="meta"><span>${hospitalName(session.hospitalId)}</span><span>${departmentName(session.departmentId)}</span><span>${session.phone}</span></div>
         <div class="notice">${reminderStatusText()}</div>
-        <div class="list">${relevant.length ? relevant.map(renderHospitalAlert).join("") : `<div class="muted">目前沒有派送給你的通報</div>`}</div>
+        <div class="list">${recentAlerts.length ? recentAlerts.map(renderHospitalAlert).join("") : `<div class="muted">目前沒有派送給你的通報</div>`}</div>
+      </section>
+      <section class="panel">
+        <div class="toolbar">
+          <h2>院後端歷史通報</h2>
+          <button type="button" class="secondary" id="toggleHospitalHistory">${hospitalHistoryExpanded ? "收合" : "展開"} ${historyAlerts.length} 筆</button>
+        </div>
+        ${hospitalHistoryExpanded ? `<div class="list">${historyAlerts.length ? historyAlerts.map(renderHospitalAlert).join("") : `<div class="muted">尚無歷史通報</div>`}</div>` : `<div class="muted">已收合 ${historyAlerts.length} 筆歷史通報</div>`}
       </section>
       <section class="panel">
         <h2>通知規則</h2>
@@ -1193,10 +1283,17 @@ function renderDepartmentDutySection(hospitalId, department) {
 }
 
 function renderAdminRecordsPanel() {
+  const alerts = state.alerts.slice().reverse();
+  const recentAlerts = alerts.slice(0, 8);
+  const historyAlerts = alerts.slice(8);
   return `
     <section class="panel wide-panel">
-      <h2>後台紀錄</h2>
-      <div class="list">${state.alerts.slice().reverse().map(renderAdminAlertRecord).join("") || `<div class="muted">尚無通報</div>`}</div>
+      <div class="toolbar">
+        <h2>後台紀錄</h2>
+        <button type="button" class="secondary" id="toggleAdminRecords">${adminRecordsExpanded ? "收合" : "展開"} ${historyAlerts.length} 筆歷史紀錄</button>
+      </div>
+      <div class="list">${recentAlerts.length ? recentAlerts.map(renderAdminAlertRecord).join("") : `<div class="muted">尚無通報</div>`}</div>
+      ${adminRecordsExpanded ? `<div class="list">${historyAlerts.length ? historyAlerts.map(renderAdminAlertRecord).join("") : `<div class="muted">尚無歷史紀錄</div>`}</div>` : `<div class="muted">已收合 ${historyAlerts.length} 筆歷史紀錄</div>`}
     </section>
   `;
 }
@@ -1510,6 +1607,11 @@ function bindCommon() {
     historyExpanded = !historyExpanded;
     render();
   });
+  document.querySelector("#toggleHospitalHistory")?.addEventListener("click", () => {
+    hospitalHistoryExpanded = !hospitalHistoryExpanded;
+    render();
+  });
+  bindStatsRangeControls();
   document.querySelectorAll(".view-alert").forEach((button) => button.addEventListener("click", () => {
     selectedAlertId = button.dataset.id;
     render();
@@ -1533,6 +1635,31 @@ function bindAdminModeSwitch() {
     view = button.dataset.adminView;
     uploadImage = "";
     stopAlarm();
+    render();
+  }));
+}
+
+function bindStatsRangeControls() {
+  document.querySelectorAll("#statsRangeMode").forEach((select) => select.addEventListener("change", (event) => {
+    statsRange.mode = event.currentTarget.value;
+    if (statsRange.mode !== "custom") {
+      statsRange.start = "";
+      statsRange.end = "";
+    } else {
+      const bounds = statsRangeBounds();
+      statsRange.start = statsRange.start || bounds.start || monthStart();
+      statsRange.end = statsRange.end || bounds.end || today();
+    }
+    render();
+  }));
+  document.querySelectorAll("#statsRangeStart").forEach((input) => input.addEventListener("change", (event) => {
+    statsRange.mode = "custom";
+    statsRange.start = event.currentTarget.value;
+    render();
+  }));
+  document.querySelectorAll("#statsRangeEnd").forEach((input) => input.addEventListener("change", (event) => {
+    statsRange.mode = "custom";
+    statsRange.end = event.currentTarget.value;
     render();
   }));
 }
@@ -1708,6 +1835,10 @@ function bindAdmin() {
     adminPage = button.dataset.adminPage;
     render();
   }));
+  document.querySelector("#toggleAdminRecords")?.addEventListener("click", () => {
+    adminRecordsExpanded = !adminRecordsExpanded;
+    render();
+  });
   document.querySelectorAll(".approve-user").forEach((button) => button.addEventListener("click", () => {
     const user = userById(button.dataset.id);
     user.approved = !user.approved;

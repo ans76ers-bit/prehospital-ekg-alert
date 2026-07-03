@@ -1,4 +1,4 @@
-const CACHE_NAME = "prehospital-critical-alert-pwa-v34";
+const CACHE_NAME = "prehospital-critical-alert-pwa-v35";
 const APP_ASSETS = [
   "./",
   "./index.html",
