@@ -94,6 +94,10 @@ textarea {
   resize: vertical;
 }
 
+select[multiple] {
+  min-height: 116px;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -245,6 +249,58 @@ label {
 
 .grid.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.wide-field {
+  grid-column: 1 / -1;
+}
+
+.alert-type-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.alert-type-card {
+  align-items: flex-start;
+  border: 0;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  padding: 18px;
+  text-align: left;
+}
+
+.alert-type-card strong {
+  color: white;
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.alert-type-card span {
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 14px;
+}
+
+.tone-red {
+  background: #b4232f;
+}
+
+.tone-blue {
+  background: #155eb6;
+}
+
+.tone-orange {
+  background: #b65f12;
+}
+
+.tone-purple {
+  background: #6b3fa0;
+}
+
+.tone-green {
+  background: #0d766e;
 }
 
 .compact-controls {
@@ -502,6 +558,14 @@ label {
   .grid.two,
   .grid.three {
     grid-template-columns: 1fr;
+  }
+
+  .alert-type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .alert-type-card {
+    min-height: 108px;
   }
 
   .duty-roster-controls {

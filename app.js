@@ -94,6 +94,7 @@ let view = session ? "dashboard" : "home";
 let adminPage = "overview";
 let uploadImage = "";
 let uploadImageInfo = "";
+let selectedAlertTypeId = "";
 let selectedAlertId = "";
 let audio = { context: null, oscillator: null, gain: null, timer: null };
 let pendingDeletedUserIds = [];
@@ -821,10 +822,12 @@ function renderDashboard() {
   if (session.role === "admin") {
     if (view === "adminPrehospital") return renderPrehospitalHome();
     if (view === "adminHospital") return renderHospitalUser();
+    if (view === "alertType") return renderAlertTypeChooser();
     if (view === "alert") return renderAlertComposer();
     return renderAdmin();
   }
   if (session.role === "hospital") return renderHospitalUser();
+  if (view === "alertType") return renderAlertTypeChooser();
   return view === "alert" ? renderAlertComposer() : renderPrehospitalHome();
 }
 
@@ -943,21 +946,71 @@ function renderStatsPanel(title, alerts) {
 }
 
 function renderAlertComposer() {
-  const typeOptions = state.alertTypes.filter((type) => type.active).map((type) => `<option value="${type.id}">${type.name}</option>`).join("");
+  const type = alertType(selectedAlertTypeId) || state.alertTypes.find((item) => item.active);
+  if (!type) return `
+    <section class="panel">
+      <div class="toolbar">
+        <h2>發起通報</h2>
+        <button type="button" class="secondary" id="backToAlertType">返回</button>
+      </div>
+      <div class="muted">目前沒有可用的通報類別，請先到管理頁面新增。</div>
+    </section>
+  `;
   return `
     <form class="panel" id="alertForm">
       <div class="toolbar">
-        <h2>發起通報</h2>
-        <button type="button" class="secondary" id="backDashboard">返回</button>
+        <h2>${type.name} 通報</h2>
+        <button type="button" class="secondary" id="backToAlertType">返回</button>
       </div>
       <div class="grid two">
-        <label>通報類別<select name="typeId" id="typeSelect">${typeOptions}</select></label>
+        <input type="hidden" name="typeId" value="${type.id}" />
         <label>後送醫院<select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospital.name}</option>`).join("")}</select></label>
       </div>
       <div class="notice" id="alertComposerMessage" ${alertComposerMessage ? "" : "hidden"}>${escapeHtml(alertComposerMessage)}</div>
-      <div id="typeFlow"></div>
+      <div id="typeFlow">${renderTypeFlow(type.id)}</div>
       <button type="submit">送出通報</button>
     </form>
+  `;
+}
+
+function renderAlertTypeChooser() {
+  const types = state.alertTypes.filter((type) => type.active);
+  return `
+    <section class="panel wide-panel">
+      <div class="toolbar">
+        <h2>選擇通報案件</h2>
+        <button type="button" class="secondary" id="backDashboard">返回</button>
+      </div>
+      <div class="alert-type-grid">
+        ${types.length ? types.map(renderAlertTypeButton).join("") : `<div class="muted">目前沒有可用的通報類別，請先到管理頁面新增。</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function alertTypeTone(typeId) {
+  return {
+    stemi: "tone-red",
+    stroke: "tone-blue",
+    trauma: "tone-orange",
+    ecmo: "tone-purple",
+  }[typeId] || "tone-green";
+}
+
+function alertTypeHint(type) {
+  if (type.id === "stemi") return "EKG 判讀與心導管啟動";
+  if (type.id === "stroke") return "急性腦梗塞流程";
+  if (type.id === "trauma") return "重大創傷與大量輸血";
+  if (type.id === "ecmo") return "ECMO 團隊評估";
+  return type.routeDepartments.map(departmentName).join("、") || "急重症通報";
+}
+
+function renderAlertTypeButton(type) {
+  return `
+    <button type="button" class="alert-type-card ${alertTypeTone(type.id)}" data-alert-type="${type.id}">
+      <strong>${type.name}</strong>
+      <span>${alertTypeHint(type)}</span>
+    </button>
   `;
 }
 
@@ -1183,6 +1236,16 @@ function renderAlertSettingsPanel() {
   return `
     <section class="panel wide-panel">
       <h2>通報類別</h2>
+      <form id="alertTypeForm" class="grid two">
+        <label>疾病/通報名稱<input name="name" required placeholder="例如：敗血症、OHCA" /></label>
+        <label>通知科別
+          <select name="routeDepartments" multiple required>
+            ${activeDepartments().map((department) => `<option value="${department.id}" ${department.id === "dep-er" ? "selected" : ""}>${department.name}</option>`).join("")}
+          </select>
+        </label>
+        <label class="wide-field">提示文字<textarea name="prompt" placeholder="請輸入院前端填寫前要看到的提醒文字"></textarea></label>
+        <button type="submit">新增通報疾病</button>
+      </form>
       <div class="list">${state.alertTypes.map(renderAlertTypeAdmin).join("")}</div>
     </section>
   `;
@@ -1643,7 +1706,8 @@ function bindStatsRangeControls() {
 
 function bindPrehospital() {
   document.querySelector("#startAlert")?.addEventListener("click", () => {
-    view = "alert";
+    view = "alertType";
+    selectedAlertTypeId = "";
     uploadImage = "";
     uploadImageInfo = "";
     alertComposerMessage = "";
@@ -1651,26 +1715,28 @@ function bindPrehospital() {
   });
   document.querySelector("#backDashboard")?.addEventListener("click", () => {
     view = session.role === "admin" ? "adminPrehospital" : "dashboard";
+    selectedAlertTypeId = "";
     uploadImage = "";
     uploadImageInfo = "";
     alertComposerMessage = "";
     render();
   });
-  const typeSelect = document.querySelector("#typeSelect");
-  const flow = document.querySelector("#typeFlow");
-  if (typeSelect && flow) {
-    const paintFlow = () => {
-      flow.innerHTML = renderTypeFlow(typeSelect.value);
-      bindFlowControls();
-    };
-    typeSelect.addEventListener("change", () => {
-      uploadImage = "";
-      uploadImageInfo = "";
-      alertComposerMessage = "";
-      paintFlow();
-    });
-    paintFlow();
-  }
+  document.querySelectorAll(".alert-type-card").forEach((button) => button.addEventListener("click", () => {
+    selectedAlertTypeId = button.dataset.alertType;
+    uploadImage = "";
+    uploadImageInfo = "";
+    alertComposerMessage = "";
+    view = "alert";
+    render();
+  }));
+  document.querySelector("#backToAlertType")?.addEventListener("click", () => {
+    view = "alertType";
+    uploadImage = "";
+    uploadImageInfo = "";
+    alertComposerMessage = "";
+    render();
+  });
+  if (document.querySelector("#typeFlow")) bindFlowControls();
   document.querySelector("#alertForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = document.querySelector("#alertComposerMessage");
@@ -1712,6 +1778,7 @@ function bindPrehospital() {
       }
       uploadImage = "";
       uploadImageInfo = "";
+      selectedAlertTypeId = "";
       view = session.role === "admin" ? "adminPrehospital" : "dashboard";
       render();
     } catch (error) {
@@ -1895,6 +1962,23 @@ function bindAdmin() {
     saveState();
     render();
   }));
+  document.querySelector("#alertTypeForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const name = String(data.get("name") || "").trim();
+    if (!name) return;
+    const routeDepartments = data.getAll("routeDepartments");
+    state.alertTypes.push({
+      id: uid("type"),
+      name,
+      routeDepartments: routeDepartments.length ? routeDepartments : ["dep-er"],
+      active: true,
+      prompt: String(data.get("prompt") || `${name} 通報，請確認是否符合通報條件。`).trim(),
+    });
+    saveState();
+    render();
+  });
   document.querySelector("#manualDutyForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
