@@ -1,0 +1,16 @@
+{
+  "appId": "tw.org.ems.prehospitalekg",
+  "appName": "院前 EKG 通報",
+  "webDir": "www",
+  "server": {
+    "url": "https://prehospital-critical-alert-test.onrender.com",
+    "cleartext": false
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_ems",
+      "iconColor": "#0d766e",
+      "sound": "ems_alert.wav"
+    }
+  }
+}

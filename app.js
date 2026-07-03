@@ -2016,6 +2016,7 @@ async function ensureAudioContext() {
 
 async function enableAlertReminders() {
   await ensureAudioContext();
+  await prepareNativeAlertChannel();
   if ("Notification" in window && Notification.permission === "default") {
     try {
       await Notification.requestPermission();
@@ -2046,10 +2047,72 @@ function installReminderAutoUnlock() {
 function reminderStatusText() {
   const notificationText = "Notification" in window ? `通知權限：${Notification.permission === "granted" ? "已允許" : Notification.permission === "denied" ? "已封鎖" : "尚未允許"}` : "此瀏覽器不支援通知";
   const audioText = alertAudioUnlocked ? "救護車警報音：已準備" : "救護車警報音：登入後點一下頁面即可自動準備";
-  return `${audioText}；${notificationText}。手機需保持登入並開啟此頁，瀏覽器才允許即時響鈴震動。`;
+  const nativeText = isNativeApp() ? "原生 App 警示：可使用手機通知與震動" : "網頁警示：需保持頁面開啟";
+  return `${audioText}；${notificationText}；${nativeText}。正式背景提醒仍需推播服務。`;
+}
+
+function nativePlugins() {
+  return window.Capacitor?.Plugins || {};
+}
+
+function isNativeApp() {
+  return Boolean(window.Capacitor?.isNativePlatform?.());
+}
+
+function numericAlertId(alertId) {
+  return Math.abs(String(alertId).split("").reduce((hash, char) => ((hash << 5) - hash + char.charCodeAt(0)) | 0, 0)) || Date.now() % 2147483647;
+}
+
+async function prepareNativeAlertChannel() {
+  const { LocalNotifications } = nativePlugins();
+  if (!LocalNotifications) return;
+  try {
+    await LocalNotifications.requestPermissions();
+  } catch {}
+  try {
+    await LocalNotifications.createChannel({
+      id: "critical-alerts",
+      name: "急重症通報",
+      description: "院前 EKG 與急重症通報提醒",
+      importance: 5,
+      visibility: 1,
+      sound: "ems_alert.wav",
+      vibration: true,
+      lights: true,
+      lightColor: "#ff0000",
+    });
+  } catch {}
+}
+
+async function showNativeNotification(alert) {
+  const { LocalNotifications, Haptics } = nativePlugins();
+  try {
+    await Haptics?.vibrate?.({ duration: 1400 });
+  } catch {}
+  if (!LocalNotifications) return;
+  await prepareNativeAlertChannel();
+  const title = `${alertType(alert.typeId)?.name || alert.typeId} 急重症通報`;
+  const body = `${hospitalName(alert.hospitalId)} / ${stationName(alert.sender.stationId)} / ${alert.sender.phone}`;
+  try {
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: numericAlertId(alert.id),
+          title,
+          body,
+          channelId: "critical-alerts",
+          sound: "ems_alert.wav",
+          ongoing: true,
+          autoCancel: false,
+          extra: { alertId: alert.id },
+        },
+      ],
+    });
+  } catch {}
 }
 
 async function showDeviceNotification(alert) {
+  await showNativeNotification(alert);
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const title = `${alertType(alert.typeId)?.name || alert.typeId} 通報`;
   const body = `${hospitalName(alert.hospitalId)} / ${stationName(alert.sender.stationId)} / ${alert.sender.phone}`;
@@ -2103,6 +2166,9 @@ function startAlarm() {
   const play = async () => {
     try {
       if (navigator.vibrate) navigator.vibrate(ALERT_VIBRATION_PATTERN);
+      try {
+        await nativePlugins().Haptics?.vibrate?.({ duration: 1200 });
+      } catch {}
       const unlocked = await ensureAudioContext();
       if (!unlocked) return;
       await playSirenTone(1200);
@@ -2127,6 +2193,11 @@ function stopAlarm() {
   if (audio.timer) window.clearInterval(audio.timer);
   audio.timer = null;
   if (navigator.vibrate) navigator.vibrate(0);
+  try {
+    nativePlugins().LocalNotifications?.cancel?.({
+      notifications: hospitalRelevantAlerts().map((alert) => ({ id: numericAlertId(alert.id) })),
+    });
+  } catch {}
   try {
     audio.oscillator?.stop();
   } catch {}

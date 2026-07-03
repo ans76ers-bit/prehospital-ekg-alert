@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">院前 EKG 通報</string>
+    <string name="title_activity_main">院前 EKG 通報</string>
+    <string name="package_name">tw.org.ems.prehospitalekg</string>
+    <string name="custom_url_scheme">tw.org.ems.prehospitalekg</string>
+</resources>
