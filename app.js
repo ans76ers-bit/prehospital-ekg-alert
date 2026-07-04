@@ -1033,7 +1033,7 @@ function renderPrehospitalHome() {
       <section class="panel">
         <h2>院前端通報</h2>
         <div class="meta"><span>${stationName(session.stationId)}</span><span>${session.phone}</span></div>
-        <button id="startAlert">通報</button>
+        <button id="startAlert" class="emergency-alert-button">通報案件</button>
       </section>
       <section class="panel">
         <div class="toolbar"><h2>我的通報紀錄</h2><button class="secondary" id="refresh">更新</button></div>

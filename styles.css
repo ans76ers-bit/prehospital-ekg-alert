@@ -62,6 +62,26 @@ button.danger {
   background: var(--accent);
 }
 
+button.emergency-alert-button {
+  background: #b91c1c;
+  border-radius: 8px;
+  box-shadow: 0 10px 22px rgba(185, 28, 28, 0.24);
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0;
+  min-height: 108px;
+  width: 100%;
+}
+
+button.emergency-alert-button:hover {
+  background: #991b1b;
+}
+
+button.emergency-alert-button:active {
+  background: #7f1d1d;
+  transform: translateY(1px);
+}
+
 button.ghost {
   background: transparent;
   color: var(--brand);
