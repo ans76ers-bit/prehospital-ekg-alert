@@ -8,6 +8,17 @@ const ALERT_IMAGES_TO_KEEP = 3;
 const EKG_IMAGE_MAX_WIDTH = 900;
 const EKG_IMAGE_QUALITY = 0.62;
 const TAIWAN_CITIES = ["基隆市", "臺北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "臺中市", "彰化縣", "南投縣", "雲林縣", "嘉義市", "嘉義縣", "臺南市", "高雄市", "屏東縣", "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"];
+const AGE_RANGE_OPTIONS = ["不詳", "0-10", "10-20", "20-30", "30-40", "40-50", "50-60", "60-70", "70-80", "80以上"];
+const GENDER_OPTIONS = ["不詳", "男", "女"];
+const FIXED_ALERT_TYPE_ORDER = ["stemi", "ohca", "trauma", "stroke"];
+const DEFAULT_ECMO_CRITERIA = [
+  "年齡小於 70 歲",
+  "目擊倒地且有人立即 CPR",
+  "初始心律為 VF/VT 或可電擊心律",
+  "無臥床、癌末或其他不可逆末期疾病",
+  "預估報案後 40 分鐘內可抵達醫院",
+  "無明顯大出血",
+].join("\n");
 
 const dateKey = (date = new Date()) => {
   const local = new Date(date);
@@ -68,11 +79,11 @@ const seed = {
       prompt: "拍攝 12 導程 EKG 後，送至後送醫院當班急診醫學科醫師與心臟內科醫師。",
     },
     {
-      id: "ecmo",
-      name: "ECMO",
+      id: "ohca",
+      name: "內科 OHCA",
       routeDepartments: ["dep-er", "dep-cvs"],
       active: true,
-      prompt: "院前啟動 ECMO 準則：疑似可逆性休克或心跳停止，現場處置後仍高度懷疑需 ECMO 團隊評估時可通報。本段文字可由管理者修改。",
+      prompt: `院前啟動 ECMO 參考標準：\n${DEFAULT_ECMO_CRITERIA}\n\n本段文字可由管理者修改。`,
     },
     {
       id: "trauma",
@@ -111,12 +122,25 @@ let unitHospitalCity = "新北市";
 let unitHospitalId = "h-tu";
 let unitStationCity = "新北市";
 let unitBrigadeId = "b-ntpc-5";
+let alertHospitalCity = "";
 let alertAudioUnlocked = false;
 let pushRegistrationStarted = false;
 let alertComposerMessage = "";
 let historyExpanded = false;
 let hospitalHistoryExpanded = false;
 let adminRecordsExpanded = false;
+let statsView = "hospital";
+let statsHospitalCity = "all";
+let statsHospitalId = "all";
+let statsFireCity = "all";
+let statsBrigadeId = "all";
+let statsStationId = "all";
+let accountRoleFilter = "prehospital";
+let accountCityFilter = "all";
+let accountBrigadeFilter = "all";
+let accountStationFilter = "all";
+let accountHospitalFilter = "all";
+let accountDepartmentFilter = "all";
 let statsRange = {
   typeId: "all",
   start: monthStart(),
@@ -150,11 +174,11 @@ function migrateState(current) {
     };
   });
   next.hospitals = mergeByName(seed.hospitals, current.hospitals || []).filter((hospital) => hospital.id !== "h-fy" && hospital.name !== "亞東醫院");
-  next.departments = mergeByName(seed.departments, current.departments || []).map((department) => ({
-    ...department,
-    hospitalId: department.hospitalId || "h-tu",
-    name: department.id === "dep-er" ? "急診醫學科" : department.name,
-  }));
+  next.departments = mergeDepartments(seed.departments, current.departments || []).map((department) => {
+    const clean = { ...department, name: department.id === "dep-er" ? "急診醫學科" : department.name };
+    delete clean.hospitalId;
+    return clean;
+  });
   next.users = mergeByPhone(seed.users, current.users || [])
     .filter((user) => !["u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"].includes(user.id))
     .map((user) => ({
@@ -168,26 +192,58 @@ function migrateState(current) {
     respondedBy: "",
     respondedAt: "",
     response: "",
+    sex: alert.sex || alert.gender || "不詳",
+    ageRange: alert.ageRange || "不詳",
     ...alert,
+    typeId: alert.typeId === "ecmo" ? "ohca" : alert.typeId,
   }));
   compactAlertImages(next);
-  next.alertTypes = (current.alertTypes || seed.alertTypes).map((type) => {
+  next.alertTypes = mergeAlertTypes(seed.alertTypes, current.alertTypes || []).map((type) => {
+    const nextType = { ...type, id: type.id === "ecmo" ? "ohca" : type.id, name: type.id === "ecmo" ? "內科 OHCA" : type.name };
     if (type.id === "stemi") {
       return {
-        ...type,
+        ...nextType,
         routeDepartments: ["dep-er", "dep-cardio"],
         prompt: "拍攝 12 導程 EKG 後，送至後送醫院當班急診醫學科醫師與心臟內科醫師。",
       };
     }
-    if (type.id === "ecmo") {
+    if (type.id === "ecmo" || type.id === "ohca") {
       return {
-        ...type,
+        ...nextType,
+        name: "內科 OHCA",
         routeDepartments: ["dep-er", "dep-cvs"],
+        prompt: type.prompt?.includes("年齡小於 70") ? type.prompt : `院前啟動 ECMO 參考標準：\n${DEFAULT_ECMO_CRITERIA}\n\n本段文字可由管理者修改。`,
       };
     }
-    return type;
-  });
+    return nextType;
+  })
+    .filter((type, index, all) => FIXED_ALERT_TYPE_ORDER.includes(type.id) && all.findIndex((item) => item.id === type.id) === index)
+    .sort((a, b) => FIXED_ALERT_TYPE_ORDER.indexOf(a.id) - FIXED_ALERT_TYPE_ORDER.indexOf(b.id));
   return next;
+}
+
+function mergeDepartments(requiredItems, existingItems) {
+  const merged = [];
+  [...existingItems, ...requiredItems].forEach((item) => {
+    const key = item.id || item.name;
+    const existing = merged.find((department) => department.id === item.id || department.name === item.name || department.id === key);
+    const clean = { ...item, active: item.active !== false };
+    delete clean.hospitalId;
+    if (existing) Object.assign(existing, { ...clean, id: existing.id || clean.id });
+    else merged.push(clean);
+  });
+  return merged;
+}
+
+function mergeAlertTypes(requiredItems, existingItems) {
+  const merged = [...existingItems];
+  requiredItems.forEach((required) => {
+    const normalizedId = required.id === "ecmo" ? "ohca" : required.id;
+    const existing = merged.find((item) => item.id === normalizedId || (normalizedId === "ohca" && item.id === "ecmo"));
+    if (existing) Object.assign(existing, { ...required, ...existing, id: normalizedId });
+    else merged.push({ ...required, id: normalizedId });
+  });
+  return merged;
 }
 
 function mergeByName(requiredItems, existingItems) {
@@ -339,6 +395,10 @@ function stationName(id) {
   return state.stations.find((item) => item.id === id)?.name || "未設定分隊";
 }
 
+function stationById(id) {
+  return state.stations.find((item) => item.id === id);
+}
+
 function brigadeById(id) {
   return state.brigades?.find((item) => item.id === id);
 }
@@ -369,8 +429,7 @@ function departmentById(id) {
 }
 
 function departmentLabel(department) {
-  const hospital = department.hospitalId ? hospitalName(department.hospitalId) : "未指定醫院";
-  return `${hospital} / ${department.name}`;
+  return department.name;
 }
 
 function alertType(id) {
@@ -410,7 +469,7 @@ function activeDepartments() {
 }
 
 function activeDepartmentsForHospital(hospitalId) {
-  return activeDepartments().filter((department) => department.hospitalId === hospitalId);
+  return activeDepartments();
 }
 
 function routeDepartmentNames(departmentIds) {
@@ -426,11 +485,36 @@ function departmentMatchesRoute(departmentId, routeDepartments) {
 
 function departmentBelongsToHospital(departmentId, hospitalId) {
   const department = departmentById(departmentId);
-  return Boolean(department?.active && department.hospitalId === hospitalId);
+  const hospital = state.hospitals.find((item) => item.id === hospitalId);
+  return Boolean(department?.active && hospital?.active);
 }
 
 function cityOptions(selectedCity) {
   return TAIWAN_CITIES.map((city) => `<option value="${city}" ${city === selectedCity ? "selected" : ""}>${city}</option>`).join("");
+}
+
+function cityOptionsWithAll(selectedCity) {
+  return [`<option value="all" ${selectedCity === "all" ? "selected" : ""}>全部縣市</option>`, cityOptions(selectedCity)].join("");
+}
+
+function selectOptions(items, selectedValue, getLabel, allLabel = "") {
+  const prefix = allLabel ? [`<option value="all" ${selectedValue === "all" ? "selected" : ""}>${allLabel}</option>`] : [];
+  return prefix.concat(items.map((item) => `<option value="${item.id}" ${item.id === selectedValue ? "selected" : ""}>${getLabel(item)}</option>`)).join("");
+}
+
+function defaultAlertHospitalCity() {
+  const station = stationById(session?.stationId);
+  return station?.city || "新北市";
+}
+
+function normalizeAlertHospitalSelection() {
+  if (!alertHospitalCity || !TAIWAN_CITIES.includes(alertHospitalCity)) alertHospitalCity = defaultAlertHospitalCity();
+  let hospitals = activeHospitalsForCity(alertHospitalCity);
+  if (!hospitals.length) {
+    alertHospitalCity = activeHospitals()[0]?.city || "新北市";
+    hospitals = activeHospitalsForCity(alertHospitalCity);
+  }
+  return hospitals;
 }
 
 function normalizeUnitSelections() {
@@ -688,11 +772,15 @@ function recipientsFor(hospitalId, departments) {
 function createAlert({ typeId, hospitalId, extra, image }) {
   const type = alertType(typeId);
   const recipients = recipientsFor(hospitalId, type.routeDepartments);
+  const extraPayload = typeof extra === "object" && extra !== null ? extra : { sex: "不詳", ageRange: "不詳", text: String(extra || "") };
   const alert = {
     id: uid("alert"),
     typeId,
     hospitalId,
-    extra,
+    sex: extraPayload.sex || "不詳",
+    ageRange: extraPayload.ageRange || "不詳",
+    extraText: extraPayload.text || "",
+    extra: extraPayload,
     image: image || "",
     sender: {
       userId: session.id,
@@ -799,7 +887,7 @@ function renderPublic() {
       <div class="login-panel">
         <div class="login-title">
           <h1>院前 EKG 與急重症通報</h1>
-          <p>STEMI、ECMO、重大創傷、急性腦梗塞的院前到院後通報原型。</p>
+          <p>STEMI、內科 OHCA、重大創傷、急性腦梗塞的院前到院後通報原型。</p>
           <p class="small" id="homeClock">${nowText()}</p>
         </div>
         <div class="grid two">
@@ -987,24 +1075,74 @@ function renderProfile() {
   `;
 }
 
-function statsFor(alerts) {
-  const rows = state.alertTypes.map((type) => {
-    const typeAlerts = alerts.filter((alert) => alert.typeId === type.id);
-    const activated = typeAlerts.filter((alert) => alert.status === "activated").length;
-    const total = typeAlerts.length;
-    return { id: type.id, name: type.name, total, activated, rate: total ? Math.round((activated / total) * 100) : 0 };
-  });
+function summarizeAlerts(label, alerts) {
   const total = alerts.length;
   const activated = alerts.filter((alert) => alert.status === "activated").length;
-  return { rows, total, activated, rate: total ? Math.round((activated / total) * 100) : 0 };
+  return { label, total, activated, rate: total ? Math.round((activated / total) * 100) : 0 };
+}
+
+function statsRowsByCategory(alerts) {
+  return state.alertTypes.map((type) => summarizeAlerts(type.name, alerts.filter((alert) => alert.typeId === type.id)));
+}
+
+function statsRowsByHospital(alerts) {
+  const visible = alerts.filter((alert) => {
+    const hospital = state.hospitals.find((item) => item.id === alert.hospitalId);
+    if (statsHospitalCity !== "all" && hospital?.city !== statsHospitalCity) return false;
+    if (statsHospitalId !== "all" && alert.hospitalId !== statsHospitalId) return false;
+    return true;
+  });
+  if (statsHospitalId !== "all") return [summarizeAlerts(hospitalName(statsHospitalId), visible)];
+  if (statsHospitalCity !== "all") {
+    const hospitals = activeHospitalsForCity(statsHospitalCity);
+    return hospitals.map((hospital) => summarizeAlerts(hospital.name, visible.filter((alert) => alert.hospitalId === hospital.id)));
+  }
+  return TAIWAN_CITIES.map((city) => summarizeAlerts(city, visible.filter((alert) => state.hospitals.find((hospital) => hospital.id === alert.hospitalId)?.city === city)))
+    .filter((row) => row.total > 0 || activeHospitalsForCity(row.label).length);
+}
+
+function statsRowsByFire(alerts) {
+  const visible = alerts.filter((alert) => {
+    const station = stationById(alert.sender?.stationId);
+    const brigade = brigadeById(station?.brigadeId);
+    if (statsFireCity !== "all" && station?.city !== statsFireCity) return false;
+    if (statsBrigadeId !== "all" && brigade?.id !== statsBrigadeId) return false;
+    if (statsStationId !== "all" && station?.id !== statsStationId) return false;
+    return true;
+  });
+  if (statsStationId !== "all") return [summarizeAlerts(stationName(statsStationId), visible)];
+  if (statsBrigadeId !== "all") {
+    return activeStationsForBrigade(statsBrigadeId).map((station) => summarizeAlerts(station.name, visible.filter((alert) => alert.sender?.stationId === station.id)));
+  }
+  if (statsFireCity !== "all") {
+    return activeBrigadesForCity(statsFireCity).map((brigade) => summarizeAlerts(brigade.name, visible.filter((alert) => stationById(alert.sender?.stationId)?.brigadeId === brigade.id)));
+  }
+  return TAIWAN_CITIES.map((city) => summarizeAlerts(city, visible.filter((alert) => stationById(alert.sender?.stationId)?.city === city)))
+    .filter((row) => row.total > 0 || activeBrigadesForCity(row.label).length);
+}
+
+function statsRows(alerts) {
+  if (statsView === "hospital") return statsRowsByHospital(alerts);
+  if (statsView === "fire") return statsRowsByFire(alerts);
+  return statsRowsByCategory(alerts);
+}
+
+function totalStats(rows) {
+  const total = rows.reduce((sum, row) => sum + row.total, 0);
+  const activated = rows.reduce((sum, row) => sum + row.activated, 0);
+  return { total, activated, rate: total ? Math.round((activated / total) * 100) : 0 };
 }
 
 function renderStatsPanel(title, alerts) {
   const filteredAlerts = alertsInStatsRange(alerts);
-  const stats = statsFor(filteredAlerts);
+  const rows = statsRows(filteredAlerts);
+  const totals = totalStats(rows);
   const range = statsRangeBounds();
   const typeOptions = [["all", "全部重症"], ...state.alertTypes.map((type) => [type.id, type.name])];
   const typeLabel = typeOptions.find(([value]) => value === statsRange.typeId)?.[1] || "全部重症";
+  const hospitalCityHospitals = statsHospitalCity === "all" ? [] : activeHospitalsForCity(statsHospitalCity);
+  const fireCityBrigades = statsFireCity === "all" ? [] : activeBrigadesForCity(statsFireCity);
+  const fireStations = statsBrigadeId === "all" ? [] : activeStationsForBrigade(statsBrigadeId);
   return `
     <section class="panel">
       <div class="toolbar">
@@ -1020,12 +1158,30 @@ function renderStatsPanel(title, alerts) {
         <label>開始日期<input id="statsRangeStart" type="date" value="${statsRange.start || range.start}" /></label>
         <label>結束日期<input id="statsRangeEnd" type="date" value="${statsRange.end || range.end}" /></label>
       </div>
+      <div class="grid three compact-controls">
+        <label>統計方式
+          <select id="statsView">
+            <option value="hospital" ${statsView === "hospital" ? "selected" : ""}>以醫院為單位</option>
+            <option value="fire" ${statsView === "fire" ? "selected" : ""}>以消防為單位</option>
+            <option value="category" ${statsView === "category" ? "selected" : ""}>以重症類別為單位</option>
+          </select>
+        </label>
+        ${statsView === "hospital" ? `
+          <label>醫院縣市<select id="statsHospitalCity">${cityOptionsWithAll(statsHospitalCity)}</select></label>
+          <label>醫院<select id="statsHospitalId">${selectOptions(hospitalCityHospitals, statsHospitalId, (hospital) => hospital.name, "全部醫院")}</select></label>
+        ` : ""}
+        ${statsView === "fire" ? `
+          <label>消防縣市<select id="statsFireCity">${cityOptionsWithAll(statsFireCity)}</select></label>
+          <label>大隊<select id="statsBrigadeId">${selectOptions(fireCityBrigades, statsBrigadeId, (brigade) => brigade.name, "全部大隊")}</select></label>
+          <label>分隊<select id="statsStationId">${selectOptions(fireStations, statsStationId, (station) => station.name, "全部分隊")}</select></label>
+        ` : ""}
+      </div>
       <div class="notice">成功率目前以「成功啟動案件 / 總通報案件」計算；目前納入 ${filteredAlerts.length} / ${alerts.length} 筆。</div>
       <div class="table">
-        <div class="row header"><span>類別</span><span>總通報</span><span>啟動</span><span>成功率</span><span></span></div>
-        ${stats.rows.map((row) => `
+        <div class="row header"><span>單位/類別</span><span>總通報</span><span>啟動</span><span>成功率</span><span></span></div>
+        ${rows.map((row) => `
           <div class="row">
-            <span>${row.name}</span>
+            <span>${row.label}</span>
             <span>${row.total}</span>
             <span>${row.activated}</span>
             <span>${row.rate}%</span>
@@ -1034,9 +1190,9 @@ function renderStatsPanel(title, alerts) {
         `).join("")}
         <div class="row">
           <strong>總平均</strong>
-          <strong>${stats.total}</strong>
-          <strong>${stats.activated}</strong>
-          <strong>${stats.rate}%</strong>
+          <strong>${totals.total}</strong>
+          <strong>${totals.activated}</strong>
+          <strong>${totals.rate}%</strong>
           <span></span>
         </div>
       </div>
@@ -1046,6 +1202,8 @@ function renderStatsPanel(title, alerts) {
 
 function renderAlertComposer() {
   const type = alertType(selectedAlertTypeId) || state.alertTypes.find((item) => item.active);
+  const cityHospitals = normalizeAlertHospitalSelection();
+  const selectedHospitalId = cityHospitals[0]?.id || "";
   if (!type) return `
     <section class="panel">
       <div class="toolbar">
@@ -1063,7 +1221,14 @@ function renderAlertComposer() {
       </div>
       <div class="grid two">
         <input type="hidden" name="typeId" value="${type.id}" />
-        <label>後送醫院<select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospitalLabel(hospital)}</option>`).join("")}</select></label>
+        <label>後送縣市<select id="alertHospitalCity">${cityOptions(alertHospitalCity)}</select></label>
+        <label>後送醫院<select name="hospitalId">${cityHospitals.map((hospital) => `<option value="${hospital.id}" ${hospital.id === selectedHospitalId ? "selected" : ""}>${hospital.name}</option>`).join("")}</select></label>
+        <label>性別
+          <select name="sex">${GENDER_OPTIONS.map((option) => `<option value="${option}">${option}</option>`).join("")}</select>
+        </label>
+        <label>年齡區間
+          <select name="ageRange">${AGE_RANGE_OPTIONS.map((option) => `<option value="${option}">${option}</option>`).join("")}</select>
+        </label>
       </div>
       <div class="notice" id="alertComposerMessage" ${alertComposerMessage ? "" : "hidden"}>${escapeHtml(alertComposerMessage)}</div>
       <div id="typeFlow">${renderTypeFlow(type.id)}</div>
@@ -1092,7 +1257,7 @@ function alertTypeTone(typeId) {
     stemi: "tone-red",
     stroke: "tone-blue",
     trauma: "tone-orange",
-    ecmo: "tone-purple",
+    ohca: "tone-purple",
   }[typeId] || "tone-green";
 }
 
@@ -1100,7 +1265,7 @@ function alertTypeHint(type) {
   if (type.id === "stemi") return "EKG 判讀與心導管啟動";
   if (type.id === "stroke") return "急性腦梗塞流程";
   if (type.id === "trauma") return "重大創傷與大量輸血";
-  if (type.id === "ecmo") return "ECMO 團隊評估";
+  if (type.id === "ohca") return "內科 OHCA 與院前 ECMO 評估";
   return type.routeDepartments.map(departmentName).join("、") || "急重症通報";
 }
 
@@ -1124,10 +1289,10 @@ function renderTypeFlow(typeId) {
       ${uploadImageInfo ? `<div class="small">${escapeHtml(uploadImageInfo)}</div>` : ""}
     `;
   }
-  if (typeId === "ecmo") {
+  if (typeId === "ohca") {
     return `
       <div class="notice">${escapeHtml(type.prompt)}</div>
-      <label>是否啟動 ECMO 通報<select name="decision"><option value="是">是</option><option value="否">否</option></select></label>
+      <label>是否符合啟動院前 ECMO<select name="decision"><option value="是">是</option><option value="否">否</option></select></label>
     `;
   }
   if (typeId === "stroke") {
@@ -1146,6 +1311,7 @@ function renderTypeFlow(typeId) {
   return `
     <div class="notice">${escapeHtml(type.prompt)}</div>
     <label>是否符合大量輸血條件<select name="decision"><option value="是">是</option><option value="否">否</option></select></label>
+    <label>是否 OHCA<select name="traumaOhca"><option value="不詳">不詳</option><option value="是">是</option><option value="否">否</option></select></label>
   `;
 }
 
@@ -1167,6 +1333,7 @@ function renderAlertCard(alert) {
         <span>接收：${accepted ? accepted.name : "尚未"}</span>
         <span>通知：${recipientText}</span>
       </div>
+      <div class="meta"><span>性別：${alert.sex || alert.extra?.sex || "不詳"}</span><span>年齡：${alert.ageRange || alert.extra?.ageRange || "不詳"}</span></div>
       ${alert.response ? `<div class="${alert.response === "啟動" ? "result-stemi" : "result-non"}">回覆：${alert.response}</div>` : ""}
       <div class="actions">
         <button class="secondary view-alert" data-id="${alert.id}">檢視</button>
@@ -1230,7 +1397,8 @@ function renderHospitalAlert(alert) {
         </div>
         <span class="status ${statusClass(alert.status)}">${statusText(alert.status)}</span>
       </div>
-      <div class="small">${escapeHtml(alert.extra || "")}</div>
+      <div class="meta"><span>性別：${alert.sex || alert.extra?.sex || "不詳"}</span><span>年齡：${alert.ageRange || alert.extra?.ageRange || "不詳"}</span></div>
+      <div class="small">${escapeHtml(alert.extraText || alert.extra?.text || alert.extra || "")}</div>
       <div class="actions">
         <button class="secondary view-alert" data-id="${alert.id}">檢視</button>
         ${alert.status === "notified" ? `<button class="accept-alert" data-id="${alert.id}">接收</button>` : ""}
@@ -1248,16 +1416,14 @@ function renderAdmin() {
       content: `
         ${renderUserOverviewPanel()}
         ${renderStatsPanel("全系統通報統計", state.alerts)}
-        ${renderRecentAdminRecordsPanel(5)}
+        ${renderRecentAdminRecordsPanel(2)}
       `,
     },
     accounts: {
       title: "帳號管理",
       content: `
         ${renderPendingUsersPanel()}
-        ${renderPrehospitalUsersPanel()}
-        ${renderHospitalUsersPanel()}
-        ${renderAdminUsersPanel()}
+        ${renderAccountManagementPanel()}
       `,
     },
     units: {
@@ -1314,17 +1480,75 @@ function renderPendingUsersPanel() {
   `;
 }
 
+function accountFilteredUsers() {
+  const approvedUsers = state.users.filter((user) => user.approved && user.role === accountRoleFilter);
+  if (accountRoleFilter === "prehospital") {
+    return approvedUsers.filter((user) => {
+      const station = stationById(user.stationId);
+      if (accountCityFilter !== "all" && station?.city !== accountCityFilter) return false;
+      if (accountBrigadeFilter !== "all" && station?.brigadeId !== accountBrigadeFilter) return false;
+      if (accountStationFilter !== "all" && station?.id !== accountStationFilter) return false;
+      return true;
+    });
+  }
+  if (accountRoleFilter === "hospital") {
+    return approvedUsers.filter((user) => {
+      const hospital = state.hospitals.find((item) => item.id === user.hospitalId);
+      if (accountCityFilter !== "all" && hospital?.city !== accountCityFilter) return false;
+      if (accountHospitalFilter !== "all" && user.hospitalId !== accountHospitalFilter) return false;
+      if (accountDepartmentFilter !== "all" && user.departmentId !== accountDepartmentFilter) return false;
+      return true;
+    });
+  }
+  return approvedUsers.filter((user) => {
+    const station = stationById(user.stationId);
+    const hospital = state.hospitals.find((item) => item.id === user.hospitalId);
+    if (accountCityFilter === "all") return true;
+    return station?.city === accountCityFilter || hospital?.city === accountCityFilter;
+  });
+}
+
+function renderAccountManagementPanel() {
+  const cityBrigades = accountCityFilter === "all" ? [] : activeBrigadesForCity(accountCityFilter);
+  const brigadeStations = accountBrigadeFilter === "all" ? [] : activeStationsForBrigade(accountBrigadeFilter);
+  const cityHospitals = accountCityFilter === "all" ? [] : activeHospitalsForCity(accountCityFilter);
+  const users = accountFilteredUsers();
+  return `
+    <section class="panel wide-panel">
+      <h2>已核准帳號</h2>
+      <div class="grid three compact-controls">
+        <label>帳號類型
+          <select id="accountRoleFilter">
+            <option value="prehospital" ${accountRoleFilter === "prehospital" ? "selected" : ""}>院前端</option>
+            <option value="hospital" ${accountRoleFilter === "hospital" ? "selected" : ""}>院後端</option>
+            <option value="admin" ${accountRoleFilter === "admin" ? "selected" : ""}>管理者</option>
+          </select>
+        </label>
+        <label>縣市<select id="accountCityFilter">${cityOptionsWithAll(accountCityFilter)}</select></label>
+        ${accountRoleFilter === "prehospital" ? `
+          <label>大隊<select id="accountBrigadeFilter">${selectOptions(cityBrigades, accountBrigadeFilter, (brigade) => brigade.name, "全部大隊")}</select></label>
+          <label>分隊<select id="accountStationFilter">${selectOptions(brigadeStations, accountStationFilter, (station) => station.name, "全部分隊")}</select></label>
+        ` : ""}
+        ${accountRoleFilter === "hospital" ? `
+          <label>醫院<select id="accountHospitalFilter">${selectOptions(cityHospitals, accountHospitalFilter, (hospital) => hospital.name, "全部醫院")}</select></label>
+          <label>科別<select id="accountDepartmentFilter">${selectOptions(activeDepartments(), accountDepartmentFilter, (department) => department.name, "全部科別")}</select></label>
+        ` : ""}
+      </div>
+      <div class="list">${users.length ? users.map(renderUserAdmin).join("") : `<div class="muted">沒有符合篩選條件的帳號</div>`}</div>
+    </section>
+  `;
+}
+
 function renderUnitSettingsPanel() {
   normalizeUnitSelections();
   const cityHospitals = activeHospitalsForCity(unitHospitalCity);
   const selectedHospital = cityHospitals.find((hospital) => hospital.id === unitHospitalId);
-  const hospitalDepartments = selectedHospital ? activeDepartmentsForHospital(selectedHospital.id) : [];
   const cityBrigades = activeBrigadesForCity(unitStationCity);
   const selectedBrigade = cityBrigades.find((brigade) => brigade.id === unitBrigadeId);
   const brigadeStations = selectedBrigade ? activeStationsForBrigade(selectedBrigade.id) : [];
   return `
     <section class="panel">
-      <h2>醫院與科別</h2>
+      <h2>醫院設定</h2>
       <div class="grid two compact-controls">
         <label>縣市<select id="unitHospitalCity">${cityOptions(unitHospitalCity)}</select></label>
         <label>醫院
@@ -1338,7 +1562,22 @@ function renderUnitSettingsPanel() {
         <label>醫院<input name="name" required placeholder="例如：土城醫院" /></label>
         <button type="submit">新增醫院</button>
       </form>
-      <div class="list">${selectedHospital ? renderHospitalUnitCard(selectedHospital, hospitalDepartments) : `<div class="muted">此縣市尚未建立醫院</div>`}</div>
+      <div class="list">${selectedHospital ? renderHospitalUnitCard(selectedHospital) : `<div class="muted">此縣市尚未建立醫院</div>`}</div>
+    </section>
+    <section class="panel">
+      <h2>全系統科別</h2>
+      <form id="departmentForm" class="grid two unit-form">
+        <label>科別<input name="name" required placeholder="例如：感染科" /></label>
+        <button type="submit">新增科別</button>
+      </form>
+      <div class="unit-list">
+        ${activeDepartments().map((department) => `
+          <div class="unit-row">
+            <span>${department.name}</span>
+            <button type="button" class="secondary remove-department" data-id="${department.id}">移除</button>
+          </div>
+        `).join("") || `<div class="unit-row"><span class="muted">尚未建立科別</span></div>`}
+      </div>
     </section>
     <section class="panel">
       <h2>消防大隊與分隊</h2>
@@ -1366,25 +1605,14 @@ function renderUnitSettingsPanel() {
   `;
 }
 
-function renderHospitalUnitCard(hospital, departments = activeDepartmentsForHospital(hospital.id)) {
+function renderHospitalUnitCard(hospital) {
   return `
     <div class="item">
       <div class="toolbar">
         <strong>${hospitalLabel(hospital)}</strong>
         <button type="button" class="secondary remove-hospital" data-id="${hospital.id}">移除醫院</button>
       </div>
-      <form class="grid two unit-form hospital-department-form" data-hospital-id="${hospital.id}">
-        <label>新增此院科別<input name="name" required placeholder="例如：心臟內科" /></label>
-        <button type="submit">新增科別</button>
-      </form>
-      <div class="unit-list">
-        ${departments.length ? departments.map((department) => `
-          <div class="unit-row">
-            <span>${department.name}</span>
-            <button type="button" class="secondary remove-department" data-id="${department.id}">移除</button>
-          </div>
-        `).join("") : `<div class="unit-row"><span class="muted">此醫院尚未建立科別</span></div>`}
-      </div>
+      <div class="small muted">科別由「全系統科別」統一管理；排班與帳號會以此醫院加上科別組合。</div>
     </div>
   `;
 }
@@ -1414,17 +1642,8 @@ function renderAlertSettingsPanel() {
   return `
     <section class="panel wide-panel">
       <h2>通報類別</h2>
-      <form id="alertTypeForm" class="grid two">
-        <label>疾病/通報名稱<input name="name" required placeholder="例如：敗血症、OHCA" /></label>
-        <label>通知科別
-          <select name="routeDepartments" multiple required>
-            ${activeDepartments().map((department) => `<option value="${department.id}" ${department.id === "dep-er" ? "selected" : ""}>${departmentLabel(department)}</option>`).join("")}
-          </select>
-        </label>
-        <label class="wide-field">提示文字<textarea name="prompt" placeholder="請輸入院前端填寫前要看到的提醒文字"></textarea></label>
-        <button type="submit">新增通報疾病</button>
-      </form>
-      <div class="list">${state.alertTypes.map(renderAlertTypeAdmin).join("")}</div>
+      <div class="notice">目前測試版固定使用 STEMI、內科 OHCA、重大創傷、急性腦梗塞。未來若要新增疾病，將由程式端加入；此處只調整各通報要通知的科別與提示文字。</div>
+      <div class="list">${state.alertTypes.filter((type) => type.active).map(renderAlertTypeAdmin).join("")}</div>
     </section>
   `;
 }
@@ -1527,11 +1746,17 @@ function renderAdminRecordsPanel() {
 }
 
 function renderRecentAdminRecordsPanel(limit) {
-  const alerts = state.alerts.slice().reverse().slice(0, limit);
+  const alerts = state.alerts.slice().reverse();
+  const recentAlerts = alerts.slice(0, limit);
+  const historyAlerts = alerts.slice(limit);
   return `
     <section class="panel">
-      <h2>近期通報</h2>
-      <div class="list">${alerts.length ? alerts.map(renderAdminAlertRecord).join("") : `<div class="muted">尚無通報</div>`}</div>
+      <div class="toolbar">
+        <h2>近期通報</h2>
+        <button type="button" class="secondary" id="toggleAdminRecords">${adminRecordsExpanded ? "收合" : "展開"} ${historyAlerts.length} 筆</button>
+      </div>
+      <div class="list">${recentAlerts.length ? recentAlerts.map(renderAdminAlertRecord).join("") : `<div class="muted">尚無通報</div>`}</div>
+      ${adminRecordsExpanded ? `<div class="list">${historyAlerts.length ? historyAlerts.map(renderAdminAlertRecord).join("") : `<div class="muted">尚無其他通報</div>`}</div>` : `<div class="muted">已收合 ${historyAlerts.length} 筆較早通報</div>`}
     </section>
   `;
 }
@@ -1668,6 +1893,10 @@ function renderAdminAlertRecord(alert) {
         <span>接收時間：${alert.acceptedAt || "尚未"}</span>
       </div>
       <div class="meta">
+        <span>性別：${alert.sex || alert.extra?.sex || "不詳"}</span>
+        <span>年齡：${alert.ageRange || alert.extra?.ageRange || "不詳"}</span>
+      </div>
+      <div class="meta">
         <span>回報醫師：${responseUser?.name || "尚未"}</span>
         <span>回報時間：${alert.respondedAt || "尚未"}</span>
         <span>回報結果：${alert.response || "尚未"}</span>
@@ -1681,9 +1910,14 @@ function renderAlertTypeAdmin(type) {
   return `
     <article class="item">
       <strong>${type.name}</strong>
-      <div class="meta"><span>通知科別：${type.routeDepartments.map(departmentName).join("、")}</span></div>
+      <label>通知科別
+        <select class="route-departments-input" data-id="${type.id}" multiple>
+          ${activeDepartments().map((department) => `<option value="${department.id}" ${(type.routeDepartments || []).includes(department.id) ? "selected" : ""}>${department.name}</option>`).join("")}
+        </select>
+      </label>
+      <div class="small muted">院前端選擇醫院後，只會通知該醫院中符合以上科別且當班的人員。</div>
       <label>提示文字<textarea class="prompt-input" data-id="${type.id}">${escapeHtml(type.prompt)}</textarea></label>
-      <div class="actions"><button class="secondary save-prompt" data-id="${type.id}">儲存提示文字</button></div>
+      <div class="actions"><button class="secondary save-alert-type" data-id="${type.id}">儲存設定</button></div>
     </article>
   `;
 }
@@ -1713,7 +1947,7 @@ function renderAlertModal(id) {
       <div class="modal">
         <div class="toolbar"><h2>${alertType(alert.typeId)?.name || alert.typeId} 通報</h2><button class="secondary" id="closeModal">關閉</button></div>
         <div class="meta"><span>${hospitalName(alert.hospitalId)}</span><span>${stationName(alert.sender.stationId)}</span><span>${alert.createdAt}</span></div>
-        <div class="notice">${escapeHtml(alert.extra || "")}</div>
+        <div class="notice">${escapeHtml(alert.extraText || alert.extra?.text || alert.extra || "")}</div>
         ${alert.image ? `<div class="preview"><img src="${alert.image}" alt="uploaded ECG" /></div>` : ""}
         <div class="small">${alert.audit.map(escapeHtml).join("<br />")}</div>
       </div>
@@ -1889,6 +2123,34 @@ function bindStatsRangeControls() {
     statsRange.end = event.currentTarget.value;
     render();
   }));
+  document.querySelectorAll("#statsView").forEach((select) => select.addEventListener("change", (event) => {
+    statsView = event.currentTarget.value || "hospital";
+    render();
+  }));
+  document.querySelectorAll("#statsHospitalCity").forEach((select) => select.addEventListener("change", (event) => {
+    statsHospitalCity = event.currentTarget.value || "all";
+    statsHospitalId = "all";
+    render();
+  }));
+  document.querySelectorAll("#statsHospitalId").forEach((select) => select.addEventListener("change", (event) => {
+    statsHospitalId = event.currentTarget.value || "all";
+    render();
+  }));
+  document.querySelectorAll("#statsFireCity").forEach((select) => select.addEventListener("change", (event) => {
+    statsFireCity = event.currentTarget.value || "all";
+    statsBrigadeId = "all";
+    statsStationId = "all";
+    render();
+  }));
+  document.querySelectorAll("#statsBrigadeId").forEach((select) => select.addEventListener("change", (event) => {
+    statsBrigadeId = event.currentTarget.value || "all";
+    statsStationId = "all";
+    render();
+  }));
+  document.querySelectorAll("#statsStationId").forEach((select) => select.addEventListener("change", (event) => {
+    statsStationId = event.currentTarget.value || "all";
+    render();
+  }));
 }
 
 function bindPrehospital() {
@@ -1910,6 +2172,7 @@ function bindPrehospital() {
   });
   document.querySelectorAll(".alert-type-card").forEach((button) => button.addEventListener("click", () => {
     selectedAlertTypeId = button.dataset.alertType;
+    alertHospitalCity = defaultAlertHospitalCity();
     uploadImage = "";
     uploadImageInfo = "";
     alertComposerMessage = "";
@@ -1921,6 +2184,10 @@ function bindPrehospital() {
     uploadImage = "";
     uploadImageInfo = "";
     alertComposerMessage = "";
+    render();
+  });
+  document.querySelector("#alertHospitalCity")?.addEventListener("change", (event) => {
+    alertHospitalCity = event.currentTarget.value || defaultAlertHospitalCity();
     render();
   });
   if (document.querySelector("#typeFlow")) bindFlowControls();
@@ -1941,11 +2208,15 @@ function bindPrehospital() {
         setMessage("找不到通報類別，請重新整理頁面後再試。");
         return;
       }
+      if (!data.hospitalId) {
+        setMessage("目前此縣市沒有可選擇的後送醫院，請改選縣市或先到管理頁面新增醫院。");
+        return;
+      }
       if (data.typeId === "stemi" && !uploadImage) {
         setMessage("STEMI 通報需先上傳 EKG 影像，或按「使用範例影像」後再送出。");
         return;
       }
-      if (data.decision === "否") {
+      if (data.typeId === "stroke" && data.decision === "否") {
         setMessage("已選擇不通報，未送出通知。");
         return;
       }
@@ -2019,9 +2290,15 @@ function bindFlowControls() {
 }
 
 function buildExtra(data, type) {
-  if (data.typeId === "stemi") return "院前端已上傳 EKG 影像，請判讀並決定是否啟動。";
-  if (data.typeId === "stroke") return `${type.prompt}\n最後正常時間：${data.strokeWindow}`;
-  return `${type.prompt}\n院前端選擇：${data.decision}`;
+  const sex = data.sex || "不詳";
+  const ageRange = data.ageRange || "不詳";
+  const lines = [`性別：${sex}`, `年齡區間：${ageRange}`];
+  if (data.typeId === "stemi") lines.push("院前端已上傳 EKG 影像，請判讀並決定是否啟動。");
+  else if (data.typeId === "stroke") lines.push(type.prompt, `最後正常時間：${data.strokeWindow}`, `是否通報：${data.decision || "不詳"}`);
+  else if (data.typeId === "ohca") lines.push(type.prompt, `是否符合啟動院前 ECMO：${data.decision || "不詳"}`);
+  else if (data.typeId === "trauma") lines.push(type.prompt, `是否符合大量輸血條件：${data.decision || "不詳"}`, `是否 OHCA：${data.traumaOhca || "不詳"}`);
+  else lines.push(type.prompt || "", `院前端選擇：${data.decision || "不詳"}`);
+  return { sex, ageRange, text: lines.filter(Boolean).join("\n") };
 }
 
 function bindHospitalUser() {
@@ -2140,6 +2417,39 @@ function bindAdmin() {
     unitBrigadeId = event.currentTarget.value || "";
     render();
   });
+  document.querySelector("#accountRoleFilter")?.addEventListener("change", (event) => {
+    accountRoleFilter = event.currentTarget.value || "prehospital";
+    accountCityFilter = "all";
+    accountBrigadeFilter = "all";
+    accountStationFilter = "all";
+    accountHospitalFilter = "all";
+    accountDepartmentFilter = "all";
+    render();
+  });
+  document.querySelector("#accountCityFilter")?.addEventListener("change", (event) => {
+    accountCityFilter = event.currentTarget.value || "all";
+    accountBrigadeFilter = "all";
+    accountStationFilter = "all";
+    accountHospitalFilter = "all";
+    render();
+  });
+  document.querySelector("#accountBrigadeFilter")?.addEventListener("change", (event) => {
+    accountBrigadeFilter = event.currentTarget.value || "all";
+    accountStationFilter = "all";
+    render();
+  });
+  document.querySelector("#accountStationFilter")?.addEventListener("change", (event) => {
+    accountStationFilter = event.currentTarget.value || "all";
+    render();
+  });
+  document.querySelector("#accountHospitalFilter")?.addEventListener("change", (event) => {
+    accountHospitalFilter = event.currentTarget.value || "all";
+    render();
+  });
+  document.querySelector("#accountDepartmentFilter")?.addEventListener("change", (event) => {
+    accountDepartmentFilter = event.currentTarget.value || "all";
+    render();
+  });
   document.querySelector("#hospitalForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
@@ -2172,21 +2482,21 @@ function bindAdmin() {
     saveState();
     render();
   });
-  document.querySelectorAll(".hospital-department-form").forEach((form) => form.addEventListener("submit", (event) => {
+  document.querySelector("#departmentForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-    const hospitalId = event.currentTarget.dataset.hospitalId;
-    if (state.departments.some((department) => department.hospitalId === hospitalId && department.name === data.name && department.active)) return alert("此醫院已有相同名稱的科別。");
-    state.departments.push({ id: uid("dep"), hospitalId, active: true, ...data });
+    const name = String(data.name || "").trim();
+    if (!name) return;
+    if (state.departments.some((department) => department.name === name && department.active)) return alert("已有相同名稱的科別。");
+    state.departments.push({ id: uid("dep"), name, active: true });
     saveState();
     render();
-  }));
+  });
   document.querySelectorAll(".remove-hospital").forEach((button) => button.addEventListener("click", () => {
     const hospital = state.hospitals.find((item) => item.id === button.dataset.id);
     if (!hospital) return;
-    if (!confirm(`確定要移除 ${hospital.name}？此醫院的科別與排班也會停用，但歷史通報仍會保留。`)) return;
+    if (!confirm(`確定要移除 ${hospital.name}？此醫院的排班也會停用，但歷史通報仍會保留。`)) return;
     hospital.active = false;
-    state.departments.filter((department) => department.hospitalId === hospital.id).forEach((department) => (department.active = false));
     state.onDuty = state.onDuty.filter((duty) => duty.hospitalId !== hospital.id);
     if (dutyHospitalFilter === hospital.id) dutyHospitalFilter = "all";
     if (unitHospitalId === hospital.id) unitHospitalId = activeHospitalsForCity(unitHospitalCity).find((item) => item.id !== hospital.id)?.id || "";
@@ -2206,7 +2516,7 @@ function bindAdmin() {
   document.querySelectorAll(".remove-department").forEach((button) => button.addEventListener("click", () => {
     const department = state.departments.find((item) => item.id === button.dataset.id);
     if (!department) return;
-    if (!confirm(`確定要移除 ${hospitalName(department.hospitalId)} / ${department.name}？此科別排班也會停用。`)) return;
+    if (!confirm(`確定要移除 ${department.name}？使用此科別的排班也會停用，歷史通報仍會保留。`)) return;
     department.active = false;
     state.onDuty = state.onDuty.filter((duty) => duty.departmentId !== department.id);
     saveState();
@@ -2220,29 +2530,16 @@ function bindAdmin() {
     saveState();
     render();
   }));
-  document.querySelectorAll(".save-prompt").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll(".save-alert-type").forEach((button) => button.addEventListener("click", () => {
     const type = alertType(button.dataset.id);
+    const routeSelect = document.querySelector(`.route-departments-input[data-id="${button.dataset.id}"]`);
+    const routeDepartments = routeSelect ? Array.from(routeSelect.selectedOptions).map((option) => option.value) : [];
+    if (!routeDepartments.length) return alert("請至少選擇一個通知科別。");
+    type.routeDepartments = routeDepartments;
     type.prompt = document.querySelector(`.prompt-input[data-id="${button.dataset.id}"]`).value;
     saveState();
     render();
   }));
-  document.querySelector("#alertTypeForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    const name = String(data.get("name") || "").trim();
-    if (!name) return;
-    const routeDepartments = data.getAll("routeDepartments");
-    state.alertTypes.push({
-      id: uid("type"),
-      name,
-      routeDepartments: routeDepartments.length ? routeDepartments : ["dep-er"],
-      active: true,
-      prompt: String(data.get("prompt") || `${name} 通報，請確認是否符合通報條件。`).trim(),
-    });
-    saveState();
-    render();
-  });
   document.querySelector("#manualDutyForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
@@ -2291,7 +2588,7 @@ function bindAdmin() {
     parseCsv(document.querySelector("#scheduleCsv").value).forEach((row) => {
       const hospital = state.hospitals.find((item) => item.name === row.hospital);
       if (!hospital) return;
-      const department = state.departments.find((item) => item.hospitalId === hospital.id && item.name === row.department && item.active);
+      const department = state.departments.find((item) => item.name === row.department && item.active);
       if (!department) return;
       let user = state.users.find((item) => item.phone === row.phone);
       if (!user) {

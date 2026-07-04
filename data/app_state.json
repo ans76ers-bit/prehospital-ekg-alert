@@ -4,61 +4,81 @@
       "id": "s-tucheng",
       "city": "新北市",
       "name": "土城分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-dingpu",
       "city": "新北市",
       "name": "頂埔分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-qingshui",
       "city": "新北市",
       "name": "清水分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-shulin",
       "city": "新北市",
       "name": "樹林分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-shutan",
       "city": "新北市",
       "name": "樹潭分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-ganyuan",
       "city": "新北市",
       "name": "柑園分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-sanxia",
       "city": "新北市",
       "name": "三峽分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-longen",
       "city": "新北市",
       "name": "隆恩分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-yingge",
       "city": "新北市",
       "name": "鶯歌分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     },
     {
       "id": "s-fengming",
       "city": "新北市",
       "name": "鳳鳴分隊",
-      "active": true
+      "active": true,
+      "brigadeId": "b-ntpc-5",
+      "brigade": "第五救災救護大隊"
     }
   ],
   "hospitals": [
@@ -66,12 +86,6 @@
       "id": "h-tu",
       "city": "新北市",
       "name": "土城醫院",
-      "active": true
-    },
-    {
-      "id": "h-fy",
-      "city": "新北市",
-      "name": "亞東醫院",
       "active": true
     }
   ],
@@ -120,48 +134,7 @@
       "approved": true
     }
   ],
-  "onDuty": [
-    {
-      "id": "od-er",
-      "userId": "u-doc-er",
-      "hospitalId": "h-tu",
-      "departmentId": "dep-er",
-      "dutyDate": "2026-07-01",
-      "active": true
-    },
-    {
-      "id": "od-cardio",
-      "userId": "u-doc-cardio",
-      "hospitalId": "h-tu",
-      "departmentId": "dep-cardio",
-      "dutyDate": "2026-07-01",
-      "active": true
-    },
-    {
-      "id": "od-trauma",
-      "userId": "u-doc-trauma",
-      "hospitalId": "h-tu",
-      "departmentId": "dep-trauma",
-      "dutyDate": "2026-07-01",
-      "active": true
-    },
-    {
-      "id": "od-neuro",
-      "userId": "u-doc-neuro",
-      "hospitalId": "h-fy",
-      "departmentId": "dep-neuro",
-      "dutyDate": "2026-07-01",
-      "active": true
-    },
-    {
-      "id": "od-cvs",
-      "userId": "u-doc-cvs",
-      "hospitalId": "h-tu",
-      "departmentId": "dep-cvs",
-      "dutyDate": "2026-07-01",
-      "active": true
-    }
-  ],
+  "onDuty": [],
   "alertTypes": [
     {
       "id": "stemi",
@@ -171,17 +144,17 @@
         "dep-cardio"
       ],
       "active": true,
-      "prompt": "拍攝 12 導程 EKG 後，送至後送醫院當班急診科醫師與心臟內科醫師。"
+      "prompt": "拍攝 12 導程 EKG 後，送至後送醫院當班急診醫學科醫師與心臟內科醫師。"
     },
     {
-      "id": "ecmo",
-      "name": "ECMO",
+      "id": "ohca",
+      "name": "內科 OHCA",
       "routeDepartments": [
         "dep-er",
         "dep-cvs"
       ],
       "active": true,
-      "prompt": "請通報後送醫院急診醫學科醫師與心臟外科醫師。"
+      "prompt": "院前啟動 ECMO 參考標準：\n年齡小於 70 歲\n目擊倒地且有人立即 CPR\n初始心律為 VF/VT 或可電擊心律\n無臥床、癌末或其他不可逆末期疾病\n預估報案後 40 分鐘內可抵達醫院\n無明顯大出血\n\n本段文字可由管理者修改。"
     },
     {
       "id": "trauma",
@@ -204,5 +177,13 @@
       "prompt": "請通報後送醫院急診醫學科醫師與神經內科醫師。"
     }
   ],
-  "alerts": []
+  "alerts": [],
+  "brigades": [
+    {
+      "id": "b-ntpc-5",
+      "city": "新北市",
+      "name": "第五救災救護大隊",
+      "active": true
+    }
+  ]
 }
