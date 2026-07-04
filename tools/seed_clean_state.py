@@ -22,7 +22,6 @@ def main():
         ],
         "hospitals": [
             {"id": "h-tu", "city": "新北市", "name": "土城醫院", "active": True},
-            {"id": "h-fy", "city": "新北市", "name": "亞東醫院", "active": True},
         ],
         "departments": [
             {"id": "dep-er", "name": "急診醫學科", "active": True},

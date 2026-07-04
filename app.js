@@ -8,7 +8,8 @@ const ALERT_IMAGES_TO_KEEP = 3;
 const EKG_IMAGE_MAX_WIDTH = 900;
 const EKG_IMAGE_QUALITY = 0.62;
 const TAIWAN_CITIES = ["基隆市", "臺北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "臺中市", "彰化縣", "南投縣", "雲林縣", "嘉義市", "嘉義縣", "臺南市", "高雄市", "屏東縣", "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"];
-const RETIRED_HOSPITAL_NAMES = ["亞東醫院", "為恭醫院", "違工醫院"];
+const RETIRED_HOSPITAL_NAMES = ["亞東", "亞東醫院", "為恭", "為恭醫院", "違工", "違工醫院"];
+const RETIRED_HOSPITAL_KEYWORDS = ["亞東", "為恭", "違工"];
 const RETIRED_HOSPITAL_IDS = ["h-fy"];
 const AGE_RANGE_OPTIONS = ["不詳", "0-10", "10-20", "20-30", "30-40", "40-50", "50-60", "60-70", "70-80", "80以上"];
 const GENDER_OPTIONS = ["不詳", "男", "女"];
@@ -189,7 +190,8 @@ function migrateState(current) {
       password: user.password || user.phone,
       stationId: user.stationId === "s-banqiao" ? "s-tucheng" : user.role === "admin" && !user.stationId ? "s-tucheng" : user.stationId,
     }));
-  next.onDuty = (current.onDuty || []).filter((duty) => !RETIRED_HOSPITAL_IDS.includes(duty.hospitalId));
+  const activeHospitalIds = new Set(next.hospitals.filter((hospital) => hospital.active && !isRetiredHospital(hospital)).map((hospital) => hospital.id));
+  next.onDuty = (current.onDuty || []).filter((duty) => activeHospitalIds.has(duty.hospitalId));
   next.alerts = (current.alerts || []).map((alert) => ({
     acceptedAt: "",
     acceptedMs: 0,
@@ -421,7 +423,13 @@ function hospitalName(id) {
 }
 
 function isRetiredHospital(hospital) {
-  return Boolean(hospital && (RETIRED_HOSPITAL_IDS.includes(hospital.id) || RETIRED_HOSPITAL_NAMES.includes(hospital.name)));
+  const name = hospital?.name || "";
+  return Boolean(
+    hospital &&
+      (RETIRED_HOSPITAL_IDS.includes(hospital.id) ||
+        RETIRED_HOSPITAL_NAMES.includes(name) ||
+        RETIRED_HOSPITAL_KEYWORDS.some((keyword) => name.includes(keyword)))
+  );
 }
 
 function hospitalLabel(hospital) {
@@ -500,7 +508,7 @@ function departmentMatchesRoute(departmentId, routeDepartments) {
 
 function departmentBelongsToHospital(departmentId, hospitalId) {
   const department = departmentById(departmentId);
-  const hospital = state.hospitals.find((item) => item.id === hospitalId);
+  const hospital = activeHospitals().find((item) => item.id === hospitalId);
   return Boolean(department?.active && hospital?.active);
 }
 
@@ -1363,7 +1371,6 @@ function renderTypeFlow(typeId) {
           <option value=">=12 小時，不建議通報">&gt;=12 小時，不建議通報</option>
         </select>
       </label>
-      <label>是否通報<select name="decision"><option value="是">是</option><option value="否">否</option></select></label>
     `;
   }
   return `
@@ -2284,10 +2291,6 @@ function bindPrehospital() {
         setMessage("STEMI 通報需先上傳 EKG 影像，或按「使用範例影像」後再送出。");
         return;
       }
-      if (data.typeId === "stroke" && data.decision === "否") {
-        setMessage("已選擇不通報，未送出通知。");
-        return;
-      }
       if (data.strokeWindow?.includes(">=12")) {
         setMessage("最後正常時間已超過 12 小時，Demo 依規則不送出通報。");
         return;
@@ -2362,7 +2365,7 @@ function buildExtra(data, type) {
   const ageRange = data.ageRange || "不詳";
   const lines = [`性別：${sex}`, `年齡區間：${ageRange}`];
   if (data.typeId === "stemi") lines.push("院前端已上傳 EKG 影像，請判讀並決定是否啟動。");
-  else if (data.typeId === "stroke") lines.push(type.prompt, `最後正常時間：${data.strokeWindow}`, `是否通報：${data.decision || "不詳"}`);
+  else if (data.typeId === "stroke") lines.push(type.prompt, `最後正常時間：${data.strokeWindow}`);
   else if (data.typeId === "ohca") lines.push(type.prompt, `是否符合啟動院前 ECMO：${data.decision || "不詳"}`);
   else if (data.typeId === "trauma") lines.push(type.prompt, `是否符合大量輸血條件：${data.decision || "不詳"}`, `是否 OHCA：${data.traumaOhca || "不詳"}`);
   else lines.push(type.prompt || "", `院前端選擇：${data.decision || "不詳"}`);

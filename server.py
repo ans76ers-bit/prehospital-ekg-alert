@@ -13,7 +13,8 @@ FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "")
 DEMO_USER_IDS = {"u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"}
 DEMO_PHONES = {"0900000000", "0911000001", "0912000001", "0912000002", "0912000003", "0912000004", "0912000005"}
 RETIRED_HOSPITAL_IDS = {"h-fy"}
-RETIRED_HOSPITAL_NAMES = {"亞東醫院"}
+RETIRED_HOSPITAL_NAMES = {"亞東", "亞東醫院", "為恭", "為恭醫院", "違工", "違工醫院"}
+RETIRED_HOSPITAL_KEYWORDS = {"亞東", "為恭", "違工"}
 MAX_ALERT_IMAGE_CHARS = 650000
 ALERT_STATUS_RANK = {
     "no-duty": 0,
@@ -37,6 +38,17 @@ ALERT_PROGRESS_FIELDS = {
 }
 _firebase_init_attempted = False
 _firebase_ready = False
+
+
+def is_retired_hospital(hospital):
+    if not isinstance(hospital, dict):
+        return False
+    name = hospital.get("name") or ""
+    return (
+        hospital.get("id") in RETIRED_HOSPITAL_IDS
+        or name in RETIRED_HOSPITAL_NAMES
+        or any(keyword in name for keyword in RETIRED_HOSPITAL_KEYWORDS)
+    )
 
 
 def compact_alert_images(state):
@@ -64,8 +76,9 @@ def sanitize_state(payload):
         state["hospitals"] = [
             hospital
             for hospital in hospitals
-            if hospital.get("id") not in RETIRED_HOSPITAL_IDS and hospital.get("name") not in RETIRED_HOSPITAL_NAMES
+            if not is_retired_hospital(hospital)
         ]
+    active_hospital_ids = {hospital.get("id") for hospital in state.get("hospitals", []) if isinstance(hospital, dict)}
     users = state.get("users")
     if isinstance(users, list):
         state["users"] = [
@@ -97,7 +110,7 @@ def sanitize_state(payload):
         state["onDuty"] = [
             shift
             for shift in on_duty
-            if shift.get("phone") not in DEMO_PHONES and shift.get("hospitalId") not in RETIRED_HOSPITAL_IDS
+            if shift.get("phone") not in DEMO_PHONES and shift.get("hospitalId") in active_hospital_ids
         ]
     return state
 
@@ -152,8 +165,10 @@ def merge_state(existing_state, incoming_state, deleted_user_ids=None, deleted_d
     merged["hospitals"] = [
         hospital
         for hospital in merged.get("hospitals", [])
-        if hospital.get("id") not in RETIRED_HOSPITAL_IDS and hospital.get("name") not in RETIRED_HOSPITAL_NAMES
+        if not is_retired_hospital(hospital)
     ]
+    active_hospital_ids = {hospital.get("id") for hospital in merged.get("hospitals", []) if isinstance(hospital, dict)}
+    merged["onDuty"] = [duty for duty in merged.get("onDuty", []) if duty.get("hospitalId") in active_hospital_ids]
     merged["alerts"] = merge_alerts_by_id(existing_state.get("alerts", []), incoming_state.get("alerts", []))
     return merged
 
