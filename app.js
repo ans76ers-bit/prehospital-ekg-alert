@@ -135,9 +135,11 @@ function migrateState(current) {
     brigade: station.brigade || (station.city === "新北市" ? "第五救災救護大隊" : ""),
   }));
   next.hospitals = mergeByName(seed.hospitals, current.hospitals || []).filter((hospital) => hospital.id !== "h-fy" && hospital.name !== "亞東醫院");
-  next.departments = mergeByName(seed.departments, current.departments || []).map((department) =>
-    department.id === "dep-er" ? { ...department, name: "急診醫學科" } : department,
-  );
+  next.departments = mergeByName(seed.departments, current.departments || []).map((department) => ({
+    ...department,
+    hospitalId: department.hospitalId || "h-tu",
+    name: department.id === "dep-er" ? "急診醫學科" : department.name,
+  }));
   next.users = mergeByPhone(seed.users, current.users || [])
     .filter((user) => !["u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"].includes(user.id))
     .map((user) => ({
@@ -338,6 +340,15 @@ function departmentName(id) {
   return state.departments.find((item) => item.id === id)?.name || "未設定科別";
 }
 
+function departmentById(id) {
+  return state.departments.find((item) => item.id === id);
+}
+
+function departmentLabel(department) {
+  const hospital = department.hospitalId ? hospitalName(department.hospitalId) : "未指定醫院";
+  return `${hospital} / ${department.name}`;
+}
+
 function alertType(id) {
   return state.alertTypes.find((item) => item.id === id);
 }
@@ -358,9 +369,30 @@ function activeDepartments() {
   return state.departments.filter((item) => item.active);
 }
 
+function activeDepartmentsForHospital(hospitalId) {
+  return activeDepartments().filter((department) => department.hospitalId === hospitalId);
+}
+
+function routeDepartmentNames(departmentIds) {
+  return departmentIds.map((id) => departmentName(id)).filter(Boolean);
+}
+
+function departmentMatchesRoute(departmentId, routeDepartments) {
+  if (routeDepartments.includes(departmentId)) return true;
+  const department = departmentById(departmentId);
+  if (!department?.active) return false;
+  return routeDepartmentNames(routeDepartments).includes(department.name);
+}
+
+function departmentBelongsToHospital(departmentId, hospitalId) {
+  const department = departmentById(departmentId);
+  return Boolean(department?.active && department.hospitalId === hospitalId);
+}
+
 function hospitalDoctors() {
   return state.users
     .filter((user) => user.role === "hospital" && user.approved)
+    .filter((user) => departmentBelongsToHospital(user.departmentId, user.hospitalId))
     .sort((a, b) => `${hospitalName(a.hospitalId)}${departmentName(a.departmentId)}${a.name}`.localeCompare(`${hospitalName(b.hospitalId)}${departmentName(b.departmentId)}${b.name}`, "zh-Hant"));
 }
 
@@ -584,7 +616,7 @@ function readCompressedImage(file) {
 
 function recipientsFor(hospitalId, departments) {
   const validDuty = state.onDuty.filter(
-    (duty) => isDutyActiveNow(duty) && duty.hospitalId === hospitalId && departments.includes(duty.departmentId),
+    (duty) => isDutyActiveNow(duty) && duty.hospitalId === hospitalId && departmentMatchesRoute(duty.departmentId, departments),
   );
   return validDuty
     .map((duty) => userById(duty.userId))
@@ -772,7 +804,7 @@ function renderRegister() {
             <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospitalLabel(hospital)}</option>`).join("")}</select>
           </label>
           <label class="hospital-register" hidden>所屬科別
-            <select name="departmentId">${activeDepartments().map((dep) => `<option value="${dep.id}">${dep.name}</option>`).join("")}</select>
+            <select name="departmentId">${activeDepartments().map((dep) => `<option value="${dep.id}">${departmentLabel(dep)}</option>`).join("")}</select>
           </label>
         </div>
         <div class="actions">
@@ -893,7 +925,7 @@ function renderProfile() {
             <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}" ${hospital.id === session.hospitalId ? "selected" : ""}>${hospitalLabel(hospital)}</option>`).join("")}</select>
           </label>
           <label>所屬科別
-            <select name="departmentId">${activeDepartments().map((department) => `<option value="${department.id}" ${department.id === session.departmentId ? "selected" : ""}>${department.name}</option>`).join("")}</select>
+            <select name="departmentId">${activeDepartments().map((department) => `<option value="${department.id}" ${department.id === session.departmentId ? "selected" : ""}>${departmentLabel(department)}</option>`).join("")}</select>
           </label>
         ` : ""}
       </div>
@@ -1129,7 +1161,7 @@ function hospitalRelevantAlerts() {
     if (alert.recipients.some((recipient) => recipient.userId === session.id)) return true;
     if (session.role !== "admin") return false;
     const type = alertType(alert.typeId);
-    return alert.hospitalId === session.hospitalId && type?.routeDepartments.includes(session.departmentId);
+    return alert.hospitalId === session.hospitalId && departmentMatchesRoute(session.departmentId, type?.routeDepartments || []);
   });
 }
 
@@ -1232,26 +1264,51 @@ function renderPendingUsersPanel() {
 function renderUnitSettingsPanel() {
   return `
     <section class="panel">
-      <h2>醫院與分隊</h2>
+      <h2>醫院與科別</h2>
       <form id="hospitalForm" class="grid three">
         <label>縣市<input name="city" value="新北市" required /></label>
         <label>醫院<input name="name" required placeholder="例如：土城醫院" /></label>
         <button type="submit">新增醫院</button>
       </form>
+      <div class="list">${activeHospitals().map(renderHospitalUnitCard).join("") || `<div class="muted">尚未建立醫院</div>`}</div>
+    </section>
+    <section class="panel">
+      <h2>消防大隊與分隊</h2>
       <form id="stationForm" class="grid three">
         <label>縣市<input name="city" value="新北市" required /></label>
         <label>大隊<input name="brigade" value="第五救災救護大隊" required /></label>
         <label>分隊<input name="name" required placeholder="例如：土城分隊" /></label>
         <button type="submit">新增分隊</button>
       </form>
-      <div class="meta"><span>醫院：${activeHospitals().map(hospitalLabel).join("、") || "尚未建立"}</span></div>
-      <div class="meta"><span>分隊：${activeStations().map(stationLabel).join("、") || "尚未建立"}</span></div>
+      <div class="list">${activeStations().map(renderStationUnitCard).join("") || `<div class="muted">尚未建立分隊</div>`}</div>
     </section>
-    <section class="panel">
-      <h2>科別</h2>
-      <form id="departmentForm" class="grid two"><label>科別<input name="name" required /></label><button type="submit">新增科別</button></form>
-      <div class="meta"><span>${state.departments.map((department) => department.name).join("、")}</span></div>
-    </section>
+  `;
+}
+
+function renderHospitalUnitCard(hospital) {
+  const departments = activeDepartmentsForHospital(hospital.id);
+  return `
+    <div class="item">
+      <strong>${hospitalLabel(hospital)}</strong>
+      <div class="meta"><span>科別：${departments.map((department) => department.name).join("、") || "尚未建立"}</span></div>
+      <form class="grid three hospital-department-form" data-hospital-id="${hospital.id}">
+        <label>新增此院科別<input name="name" required placeholder="例如：心臟內科" /></label>
+        <button type="submit">新增科別</button>
+        <button type="button" class="secondary remove-hospital" data-id="${hospital.id}">移除醫院</button>
+      </form>
+      <div class="meta">
+        ${departments.map((department) => `<button type="button" class="secondary remove-department" data-id="${department.id}">移除 ${department.name}</button>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderStationUnitCard(station) {
+  return `
+    <div class="item">
+      <strong>${stationLabel(station)}</strong>
+      <div class="meta"><button type="button" class="secondary remove-station" data-id="${station.id}">移除分隊</button></div>
+    </div>
   `;
 }
 
@@ -1263,7 +1320,7 @@ function renderAlertSettingsPanel() {
         <label>疾病/通報名稱<input name="name" required placeholder="例如：敗血症、OHCA" /></label>
         <label>通知科別
           <select name="routeDepartments" multiple required>
-            ${activeDepartments().map((department) => `<option value="${department.id}" ${department.id === "dep-er" ? "selected" : ""}>${department.name}</option>`).join("")}
+            ${activeDepartments().map((department) => `<option value="${department.id}" ${department.id === "dep-er" ? "selected" : ""}>${departmentLabel(department)}</option>`).join("")}
           </select>
         </label>
         <label class="wide-field">提示文字<textarea name="prompt" placeholder="請輸入院前端填寫前要看到的提醒文字"></textarea></label>
@@ -1626,6 +1683,10 @@ function bindPublic() {
   document.querySelector("#registerForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (data.role === "hospital" && !departmentBelongsToHospital(data.departmentId, data.hospitalId)) {
+      alert("院後端科別必須屬於所選醫院，請重新選擇。");
+      return;
+    }
     data.password = data.password || data.phone;
     state.users.push({ id: uid("u"), ...data, approved: false });
     saveState();
@@ -1661,6 +1722,10 @@ function bindCommon() {
     user.password = data.password || data.phone;
     if (user.role === "prehospital" || user.role === "admin") user.stationId = data.stationId;
     if (user.role === "hospital" || user.role === "admin") {
+      if (!departmentBelongsToHospital(data.departmentId, data.hospitalId)) {
+        alert("院後端科別必須屬於所選醫院，請重新選擇。");
+        return;
+      }
       user.hospitalId = data.hospitalId;
       user.departmentId = data.departmentId;
       state.onDuty
@@ -1975,14 +2040,43 @@ function bindAdmin() {
     saveState();
     render();
   });
-  document.querySelector("#departmentForm")?.addEventListener("submit", (event) => {
+  document.querySelectorAll(".hospital-department-form").forEach((form) => form.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-    if (state.departments.some((department) => department.name === data.name && department.active)) return alert("已有相同名稱的科別。");
-    state.departments.push({ id: uid("dep"), active: true, ...data });
+    const hospitalId = event.currentTarget.dataset.hospitalId;
+    if (state.departments.some((department) => department.hospitalId === hospitalId && department.name === data.name && department.active)) return alert("此醫院已有相同名稱的科別。");
+    state.departments.push({ id: uid("dep"), hospitalId, active: true, ...data });
     saveState();
     render();
-  });
+  }));
+  document.querySelectorAll(".remove-hospital").forEach((button) => button.addEventListener("click", () => {
+    const hospital = state.hospitals.find((item) => item.id === button.dataset.id);
+    if (!hospital) return;
+    if (!confirm(`確定要移除 ${hospital.name}？此醫院的科別與排班也會停用，但歷史通報仍會保留。`)) return;
+    hospital.active = false;
+    state.departments.filter((department) => department.hospitalId === hospital.id).forEach((department) => (department.active = false));
+    state.onDuty = state.onDuty.filter((duty) => duty.hospitalId !== hospital.id);
+    if (dutyHospitalFilter === hospital.id) dutyHospitalFilter = "all";
+    saveState();
+    render();
+  }));
+  document.querySelectorAll(".remove-department").forEach((button) => button.addEventListener("click", () => {
+    const department = state.departments.find((item) => item.id === button.dataset.id);
+    if (!department) return;
+    if (!confirm(`確定要移除 ${hospitalName(department.hospitalId)} / ${department.name}？此科別排班也會停用。`)) return;
+    department.active = false;
+    state.onDuty = state.onDuty.filter((duty) => duty.departmentId !== department.id);
+    saveState();
+    render();
+  }));
+  document.querySelectorAll(".remove-station").forEach((button) => button.addEventListener("click", () => {
+    const station = state.stations.find((item) => item.id === button.dataset.id);
+    if (!station) return;
+    if (!confirm(`確定要移除 ${stationLabel(station)}？歷史通報仍會保留。`)) return;
+    station.active = false;
+    saveState();
+    render();
+  }));
   document.querySelectorAll(".save-prompt").forEach((button) => button.addEventListener("click", () => {
     const type = alertType(button.dataset.id);
     type.prompt = document.querySelector(`.prompt-input[data-id="${button.dataset.id}"]`).value;
@@ -2053,8 +2147,9 @@ function bindAdmin() {
   document.querySelector("#importSchedule")?.addEventListener("click", () => {
     parseCsv(document.querySelector("#scheduleCsv").value).forEach((row) => {
       const hospital = state.hospitals.find((item) => item.name === row.hospital);
-      const department = state.departments.find((item) => item.name === row.department);
-      if (!hospital || !department) return;
+      if (!hospital) return;
+      const department = state.departments.find((item) => item.hospitalId === hospital.id && item.name === row.department && item.active);
+      if (!department) return;
       let user = state.users.find((item) => item.phone === row.phone);
       if (!user) {
         user = { id: uid("u"), role: "hospital", name: row.name, phone: row.phone, password: row.phone, hospitalId: hospital.id, departmentId: department.id, approved: true };
