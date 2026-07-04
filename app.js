@@ -7,6 +7,7 @@ const MAX_ALERT_IMAGE_CHARS = 650000;
 const ALERT_IMAGES_TO_KEEP = 3;
 const EKG_IMAGE_MAX_WIDTH = 900;
 const EKG_IMAGE_QUALITY = 0.62;
+const TAIWAN_CITIES = ["基隆市", "臺北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "臺中市", "彰化縣", "南投縣", "雲林縣", "嘉義市", "嘉義縣", "臺南市", "高雄市", "屏東縣", "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"];
 
 const dateKey = (date = new Date()) => {
   const local = new Date(date);
@@ -18,17 +19,20 @@ const nowText = () => new Date().toLocaleString("zh-TW", { hour12: false });
 const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`;
 
 const seed = {
+  brigades: [
+    { id: "b-ntpc-5", city: "新北市", name: "第五救災救護大隊", active: true },
+  ],
   stations: [
-    { id: "s-tucheng", city: "新北市", brigade: "第五救災救護大隊", name: "土城分隊", active: true },
-    { id: "s-dingpu", city: "新北市", brigade: "第五救災救護大隊", name: "頂埔分隊", active: true },
-    { id: "s-qingshui", city: "新北市", brigade: "第五救災救護大隊", name: "清水分隊", active: true },
-    { id: "s-shulin", city: "新北市", brigade: "第五救災救護大隊", name: "樹林分隊", active: true },
-    { id: "s-shutan", city: "新北市", brigade: "第五救災救護大隊", name: "樹潭分隊", active: true },
-    { id: "s-ganyuan", city: "新北市", brigade: "第五救災救護大隊", name: "柑園分隊", active: true },
-    { id: "s-sanxia", city: "新北市", brigade: "第五救災救護大隊", name: "三峽分隊", active: true },
-    { id: "s-longen", city: "新北市", brigade: "第五救災救護大隊", name: "隆恩分隊", active: true },
-    { id: "s-yingge", city: "新北市", brigade: "第五救災救護大隊", name: "鶯歌分隊", active: true },
-    { id: "s-fengming", city: "新北市", brigade: "第五救災救護大隊", name: "鳳鳴分隊", active: true },
+    { id: "s-tucheng", city: "新北市", brigadeId: "b-ntpc-5", name: "土城分隊", active: true },
+    { id: "s-dingpu", city: "新北市", brigadeId: "b-ntpc-5", name: "頂埔分隊", active: true },
+    { id: "s-qingshui", city: "新北市", brigadeId: "b-ntpc-5", name: "清水分隊", active: true },
+    { id: "s-shulin", city: "新北市", brigadeId: "b-ntpc-5", name: "樹林分隊", active: true },
+    { id: "s-shutan", city: "新北市", brigadeId: "b-ntpc-5", name: "樹潭分隊", active: true },
+    { id: "s-ganyuan", city: "新北市", brigadeId: "b-ntpc-5", name: "柑園分隊", active: true },
+    { id: "s-sanxia", city: "新北市", brigadeId: "b-ntpc-5", name: "三峽分隊", active: true },
+    { id: "s-longen", city: "新北市", brigadeId: "b-ntpc-5", name: "隆恩分隊", active: true },
+    { id: "s-yingge", city: "新北市", brigadeId: "b-ntpc-5", name: "鶯歌分隊", active: true },
+    { id: "s-fengming", city: "新北市", brigadeId: "b-ntpc-5", name: "鳳鳴分隊", active: true },
   ],
   hospitals: [
     { id: "h-tu", city: "新北市", name: "土城醫院", active: true },
@@ -103,6 +107,10 @@ let pendingCanceledAlertIds = [];
 let authMessage = "";
 let dutyRosterDate = today();
 let dutyHospitalFilter = "all";
+let unitHospitalCity = "新北市";
+let unitHospitalId = "h-tu";
+let unitStationCity = "新北市";
+let unitBrigadeId = "b-ntpc-5";
 let alertAudioUnlocked = false;
 let pushRegistrationStarted = false;
 let alertComposerMessage = "";
@@ -130,10 +138,17 @@ function loadState() {
 
 function migrateState(current) {
   const next = { ...current };
-  next.stations = mergeByName(seed.stations, current.stations || []).map((station) => ({
-    ...station,
-    brigade: station.brigade || (station.city === "新北市" ? "第五救災救護大隊" : ""),
-  }));
+  next.brigades = mergeByName(seed.brigades, current.brigades || []);
+  const brigadeByCityName = new Map(next.brigades.map((brigade) => [`${brigade.city}|${brigade.name}`, brigade]));
+  next.stations = mergeByName(seed.stations, current.stations || []).map((station) => {
+    const brigadeName = station.brigade || (station.city === "新北市" ? "第五救災救護大隊" : "");
+    const brigade = station.brigadeId ? next.brigades.find((item) => item.id === station.brigadeId) : brigadeByCityName.get(`${station.city}|${brigadeName}`);
+    return {
+      ...station,
+      brigadeId: brigade?.id || station.brigadeId || "",
+      brigade: brigade?.name || brigadeName,
+    };
+  });
   next.hospitals = mergeByName(seed.hospitals, current.hospitals || []).filter((hospital) => hospital.id !== "h-fy" && hospital.name !== "亞東醫院");
   next.departments = mergeByName(seed.departments, current.departments || []).map((department) => ({
     ...department,
@@ -324,8 +339,17 @@ function stationName(id) {
   return state.stations.find((item) => item.id === id)?.name || "未設定分隊";
 }
 
+function brigadeById(id) {
+  return state.brigades?.find((item) => item.id === id);
+}
+
+function brigadeName(id) {
+  return brigadeById(id)?.name || "未設定大隊";
+}
+
 function stationLabel(station) {
-  return [station.city, station.brigade, station.name].filter(Boolean).join(" ");
+  const brigade = brigadeById(station.brigadeId)?.name || station.brigade || "";
+  return [station.city, brigade, station.name].filter(Boolean).join(" ");
 }
 
 function hospitalName(id) {
@@ -361,8 +385,24 @@ function activeHospitals() {
   return state.hospitals.filter((item) => item.active);
 }
 
+function activeHospitalsForCity(city) {
+  return activeHospitals().filter((hospital) => hospital.city === city);
+}
+
 function activeStations() {
   return state.stations.filter((item) => item.active);
+}
+
+function activeBrigades() {
+  return (state.brigades || []).filter((item) => item.active);
+}
+
+function activeBrigadesForCity(city) {
+  return activeBrigades().filter((brigade) => brigade.city === city);
+}
+
+function activeStationsForBrigade(brigadeId) {
+  return activeStations().filter((station) => station.brigadeId === brigadeId);
 }
 
 function activeDepartments() {
@@ -387,6 +427,19 @@ function departmentMatchesRoute(departmentId, routeDepartments) {
 function departmentBelongsToHospital(departmentId, hospitalId) {
   const department = departmentById(departmentId);
   return Boolean(department?.active && department.hospitalId === hospitalId);
+}
+
+function cityOptions(selectedCity) {
+  return TAIWAN_CITIES.map((city) => `<option value="${city}" ${city === selectedCity ? "selected" : ""}>${city}</option>`).join("");
+}
+
+function normalizeUnitSelections() {
+  if (!TAIWAN_CITIES.includes(unitHospitalCity)) unitHospitalCity = "新北市";
+  if (!TAIWAN_CITIES.includes(unitStationCity)) unitStationCity = "新北市";
+  const hospitals = activeHospitalsForCity(unitHospitalCity);
+  if (!hospitals.some((hospital) => hospital.id === unitHospitalId)) unitHospitalId = hospitals[0]?.id || "";
+  const brigades = activeBrigadesForCity(unitStationCity);
+  if (!brigades.some((brigade) => brigade.id === unitBrigadeId)) unitBrigadeId = brigades[0]?.id || "";
 }
 
 function hospitalDoctors() {
@@ -1262,31 +1315,58 @@ function renderPendingUsersPanel() {
 }
 
 function renderUnitSettingsPanel() {
+  normalizeUnitSelections();
+  const cityHospitals = activeHospitalsForCity(unitHospitalCity);
+  const selectedHospital = cityHospitals.find((hospital) => hospital.id === unitHospitalId);
+  const hospitalDepartments = selectedHospital ? activeDepartmentsForHospital(selectedHospital.id) : [];
+  const cityBrigades = activeBrigadesForCity(unitStationCity);
+  const selectedBrigade = cityBrigades.find((brigade) => brigade.id === unitBrigadeId);
+  const brigadeStations = selectedBrigade ? activeStationsForBrigade(selectedBrigade.id) : [];
   return `
     <section class="panel">
       <h2>醫院與科別</h2>
-      <form id="hospitalForm" class="grid three">
-        <label>縣市<input name="city" value="新北市" required /></label>
+      <div class="grid two compact-controls">
+        <label>縣市<select id="unitHospitalCity">${cityOptions(unitHospitalCity)}</select></label>
+        <label>醫院
+          <select id="unitHospitalSelect">
+            ${cityHospitals.map((hospital) => `<option value="${hospital.id}" ${hospital.id === unitHospitalId ? "selected" : ""}>${hospital.name}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <form id="hospitalForm" class="grid two">
+        <input type="hidden" name="city" value="${unitHospitalCity}" />
         <label>醫院<input name="name" required placeholder="例如：土城醫院" /></label>
         <button type="submit">新增醫院</button>
       </form>
-      <div class="list">${activeHospitals().map(renderHospitalUnitCard).join("") || `<div class="muted">尚未建立醫院</div>`}</div>
+      <div class="list">${selectedHospital ? renderHospitalUnitCard(selectedHospital, hospitalDepartments) : `<div class="muted">此縣市尚未建立醫院</div>`}</div>
     </section>
     <section class="panel">
       <h2>消防大隊與分隊</h2>
-      <form id="stationForm" class="grid three">
-        <label>縣市<input name="city" value="新北市" required /></label>
-        <label>大隊<input name="brigade" value="第五救災救護大隊" required /></label>
+      <div class="grid two compact-controls">
+        <label>縣市<select id="unitStationCity">${cityOptions(unitStationCity)}</select></label>
+        <label>大隊
+          <select id="unitBrigadeSelect">
+            ${cityBrigades.map((brigade) => `<option value="${brigade.id}" ${brigade.id === unitBrigadeId ? "selected" : ""}>${brigade.name}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <form id="brigadeForm" class="grid two">
+        <input type="hidden" name="city" value="${unitStationCity}" />
+        <label>大隊<input name="name" required placeholder="例如：第五救災救護大隊" /></label>
+        <button type="submit">新增大隊</button>
+      </form>
+      <form id="stationForm" class="grid two">
+        <input type="hidden" name="city" value="${unitStationCity}" />
+        <input type="hidden" name="brigadeId" value="${unitBrigadeId}" />
         <label>分隊<input name="name" required placeholder="例如：土城分隊" /></label>
         <button type="submit">新增分隊</button>
       </form>
-      <div class="list">${activeStations().map(renderStationUnitCard).join("") || `<div class="muted">尚未建立分隊</div>`}</div>
+      <div class="list">${selectedBrigade ? renderBrigadeUnitCard(selectedBrigade, brigadeStations) : `<div class="muted">此縣市尚未建立大隊</div>`}</div>
     </section>
   `;
 }
 
-function renderHospitalUnitCard(hospital) {
-  const departments = activeDepartmentsForHospital(hospital.id);
+function renderHospitalUnitCard(hospital, departments = activeDepartmentsForHospital(hospital.id)) {
   return `
     <div class="item">
       <strong>${hospitalLabel(hospital)}</strong>
@@ -1299,6 +1379,16 @@ function renderHospitalUnitCard(hospital) {
       <div class="meta">
         ${departments.map((department) => `<button type="button" class="secondary remove-department" data-id="${department.id}">移除 ${department.name}</button>`).join("")}
       </div>
+    </div>
+  `;
+}
+
+function renderBrigadeUnitCard(brigade, stations = activeStationsForBrigade(brigade.id)) {
+  return `
+    <div class="item">
+      <strong>${brigade.city} ${brigade.name}</strong>
+      <div class="meta"><button type="button" class="secondary remove-brigade" data-id="${brigade.id}">移除大隊</button></div>
+      <div class="list">${stations.map(renderStationUnitCard).join("") || `<div class="muted">此大隊尚未建立分隊</div>`}</div>
     </div>
   `;
 }
@@ -2024,18 +2114,52 @@ function bindAdmin() {
     saveState();
     render();
   }));
+  document.querySelector("#unitHospitalCity")?.addEventListener("change", (event) => {
+    unitHospitalCity = event.currentTarget.value || "新北市";
+    unitHospitalId = activeHospitalsForCity(unitHospitalCity)[0]?.id || "";
+    render();
+  });
+  document.querySelector("#unitHospitalSelect")?.addEventListener("change", (event) => {
+    unitHospitalId = event.currentTarget.value || "";
+    render();
+  });
+  document.querySelector("#unitStationCity")?.addEventListener("change", (event) => {
+    unitStationCity = event.currentTarget.value || "新北市";
+    unitBrigadeId = activeBrigadesForCity(unitStationCity)[0]?.id || "";
+    render();
+  });
+  document.querySelector("#unitBrigadeSelect")?.addEventListener("change", (event) => {
+    unitBrigadeId = event.currentTarget.value || "";
+    render();
+  });
   document.querySelector("#hospitalForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
     if (state.hospitals.some((hospital) => hospital.city === data.city && hospital.name === data.name && hospital.active)) return alert("已有相同縣市與名稱的醫院。");
-    state.hospitals.push({ id: uid("h"), active: true, ...data });
+    const hospital = { id: uid("h"), active: true, ...data };
+    state.hospitals.push(hospital);
+    unitHospitalCity = hospital.city;
+    unitHospitalId = hospital.id;
+    saveState();
+    render();
+  });
+  document.querySelector("#brigadeForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (activeBrigades().some((brigade) => brigade.city === data.city && brigade.name === data.name)) return alert("已有相同縣市與名稱的大隊。");
+    const brigade = { id: uid("b"), active: true, ...data };
+    state.brigades = state.brigades || [];
+    state.brigades.push(brigade);
+    unitStationCity = brigade.city;
+    unitBrigadeId = brigade.id;
     saveState();
     render();
   });
   document.querySelector("#stationForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
-    if (state.stations.some((station) => station.city === data.city && station.brigade === data.brigade && station.name === data.name && station.active)) return alert("已有相同縣市、大隊與名稱的分隊。");
+    if (!data.brigadeId) return alert("請先選擇或新增大隊。");
+    if (state.stations.some((station) => station.city === data.city && station.brigadeId === data.brigadeId && station.name === data.name && station.active)) return alert("已有相同縣市、大隊與名稱的分隊。");
     state.stations.push({ id: uid("s"), active: true, ...data });
     saveState();
     render();
@@ -2057,6 +2181,17 @@ function bindAdmin() {
     state.departments.filter((department) => department.hospitalId === hospital.id).forEach((department) => (department.active = false));
     state.onDuty = state.onDuty.filter((duty) => duty.hospitalId !== hospital.id);
     if (dutyHospitalFilter === hospital.id) dutyHospitalFilter = "all";
+    if (unitHospitalId === hospital.id) unitHospitalId = activeHospitalsForCity(unitHospitalCity).find((item) => item.id !== hospital.id)?.id || "";
+    saveState();
+    render();
+  }));
+  document.querySelectorAll(".remove-brigade").forEach((button) => button.addEventListener("click", () => {
+    const brigade = brigadeById(button.dataset.id);
+    if (!brigade) return;
+    if (!confirm(`確定要移除 ${brigade.city} ${brigade.name}？此大隊底下分隊也會停用。`)) return;
+    brigade.active = false;
+    state.stations.filter((station) => station.brigadeId === brigade.id).forEach((station) => (station.active = false));
+    if (unitBrigadeId === brigade.id) unitBrigadeId = activeBrigadesForCity(unitStationCity).find((item) => item.id !== brigade.id)?.id || "";
     saveState();
     render();
   }));

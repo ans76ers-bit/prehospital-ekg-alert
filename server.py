@@ -147,7 +147,7 @@ def merge_state(existing_state, incoming_state, deleted_user_ids=None, deleted_d
         for duty in merge_list_by_id(existing_state.get("onDuty", []), incoming_state.get("onDuty", []), deleted_duty_ids)
         if duty.get("userId") not in set(deleted_user_ids or [])
     ]
-    for key in ("stations", "hospitals", "departments", "alertTypes"):
+    for key in ("brigades", "stations", "hospitals", "departments", "alertTypes"):
         merged[key] = merge_list_by_id(existing_state.get(key, []), incoming_state.get(key, []))
     merged["hospitals"] = [
         hospital
