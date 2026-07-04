@@ -12,6 +12,8 @@ FIREBASE_CREDENTIALS_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
 FIREBASE_PROJECT_ID = os.environ.get("FIREBASE_PROJECT_ID", "")
 DEMO_USER_IDS = {"u-admin", "u-pre-1", "u-doc-er", "u-doc-cardio", "u-doc-trauma", "u-doc-neuro", "u-doc-cvs"}
 DEMO_PHONES = {"0900000000", "0911000001", "0912000001", "0912000002", "0912000003", "0912000004", "0912000005"}
+RETIRED_HOSPITAL_IDS = {"h-fy"}
+RETIRED_HOSPITAL_NAMES = {"亞東醫院"}
 MAX_ALERT_IMAGE_CHARS = 650000
 ALERT_STATUS_RANK = {
     "no-duty": 0,
@@ -57,6 +59,13 @@ def sanitize_state(payload):
     if not isinstance(state, dict):
         return state
     state = compact_alert_images(state)
+    hospitals = state.get("hospitals")
+    if isinstance(hospitals, list):
+        state["hospitals"] = [
+            hospital
+            for hospital in hospitals
+            if hospital.get("id") not in RETIRED_HOSPITAL_IDS and hospital.get("name") not in RETIRED_HOSPITAL_NAMES
+        ]
     users = state.get("users")
     if isinstance(users, list):
         state["users"] = [
@@ -88,7 +97,7 @@ def sanitize_state(payload):
         state["onDuty"] = [
             shift
             for shift in on_duty
-            if shift.get("phone") not in DEMO_PHONES
+            if shift.get("phone") not in DEMO_PHONES and shift.get("hospitalId") not in RETIRED_HOSPITAL_IDS
         ]
     return state
 
@@ -140,6 +149,11 @@ def merge_state(existing_state, incoming_state, deleted_user_ids=None, deleted_d
     ]
     for key in ("stations", "hospitals", "departments", "alertTypes"):
         merged[key] = merge_list_by_id(existing_state.get(key, []), incoming_state.get(key, []))
+    merged["hospitals"] = [
+        hospital
+        for hospital in merged.get("hospitals", [])
+        if hospital.get("id") not in RETIRED_HOSPITAL_IDS and hospital.get("name") not in RETIRED_HOSPITAL_NAMES
+    ]
     merged["alerts"] = merge_alerts_by_id(existing_state.get("alerts", []), incoming_state.get("alerts", []))
     return merged
 
@@ -348,7 +362,7 @@ def ensure_db(conn):
 def read_state():
     state = read_persisted_state()
     if state:
-        return compact_alert_images(state)
+        return sanitize_state(compact_alert_images(state))
     if DATABASE_URL and DATA_FILE.exists():
         state = json.loads(DATA_FILE.read_text(encoding="utf-8-sig"))
         write_state(state)

@@ -19,20 +19,19 @@ const uid = (prefix) => `${prefix}-${Math.random().toString(36).slice(2, 9)}-${D
 
 const seed = {
   stations: [
-    { id: "s-tucheng", city: "新北市", name: "土城分隊", active: true },
-    { id: "s-dingpu", city: "新北市", name: "頂埔分隊", active: true },
-    { id: "s-qingshui", city: "新北市", name: "清水分隊", active: true },
-    { id: "s-shulin", city: "新北市", name: "樹林分隊", active: true },
-    { id: "s-shutan", city: "新北市", name: "樹潭分隊", active: true },
-    { id: "s-ganyuan", city: "新北市", name: "柑園分隊", active: true },
-    { id: "s-sanxia", city: "新北市", name: "三峽分隊", active: true },
-    { id: "s-longen", city: "新北市", name: "隆恩分隊", active: true },
-    { id: "s-yingge", city: "新北市", name: "鶯歌分隊", active: true },
-    { id: "s-fengming", city: "新北市", name: "鳳鳴分隊", active: true },
+    { id: "s-tucheng", city: "新北市", brigade: "第五救災救護大隊", name: "土城分隊", active: true },
+    { id: "s-dingpu", city: "新北市", brigade: "第五救災救護大隊", name: "頂埔分隊", active: true },
+    { id: "s-qingshui", city: "新北市", brigade: "第五救災救護大隊", name: "清水分隊", active: true },
+    { id: "s-shulin", city: "新北市", brigade: "第五救災救護大隊", name: "樹林分隊", active: true },
+    { id: "s-shutan", city: "新北市", brigade: "第五救災救護大隊", name: "樹潭分隊", active: true },
+    { id: "s-ganyuan", city: "新北市", brigade: "第五救災救護大隊", name: "柑園分隊", active: true },
+    { id: "s-sanxia", city: "新北市", brigade: "第五救災救護大隊", name: "三峽分隊", active: true },
+    { id: "s-longen", city: "新北市", brigade: "第五救災救護大隊", name: "隆恩分隊", active: true },
+    { id: "s-yingge", city: "新北市", brigade: "第五救災救護大隊", name: "鶯歌分隊", active: true },
+    { id: "s-fengming", city: "新北市", brigade: "第五救災救護大隊", name: "鳳鳴分隊", active: true },
   ],
   hospitals: [
     { id: "h-tu", city: "新北市", name: "土城醫院", active: true },
-    { id: "h-fy", city: "新北市", name: "亞東醫院", active: true },
   ],
   departments: [
     { id: "dep-er", name: "急診醫學科", active: true },
@@ -69,7 +68,7 @@ const seed = {
       name: "ECMO",
       routeDepartments: ["dep-er", "dep-cvs"],
       active: true,
-      prompt: "亞東醫院院前啟動 ECMO 準則：疑似可逆性休克或心跳停止，現場處置後仍高度懷疑需 ECMO 團隊評估時可通報。本段文字可由管理者修改。",
+      prompt: "院前啟動 ECMO 準則：疑似可逆性休克或心跳停止，現場處置後仍高度懷疑需 ECMO 團隊評估時可通報。本段文字可由管理者修改。",
     },
     {
       id: "trauma",
@@ -131,7 +130,11 @@ function loadState() {
 
 function migrateState(current) {
   const next = { ...current };
-  next.stations = mergeByName(seed.stations, current.stations || []);
+  next.stations = mergeByName(seed.stations, current.stations || []).map((station) => ({
+    ...station,
+    brigade: station.brigade || (station.city === "新北市" ? "第五救災救護大隊" : ""),
+  }));
+  next.hospitals = mergeByName(seed.hospitals, current.hospitals || []).filter((hospital) => hospital.id !== "h-fy" && hospital.name !== "亞東醫院");
   next.departments = mergeByName(seed.departments, current.departments || []).map((department) =>
     department.id === "dep-er" ? { ...department, name: "急診醫學科" } : department,
   );
@@ -142,7 +145,7 @@ function migrateState(current) {
       password: user.password || user.phone,
       stationId: user.stationId === "s-banqiao" ? "s-tucheng" : user.role === "admin" && !user.stationId ? "s-tucheng" : user.stationId,
     }));
-  next.onDuty = current.onDuty || [];
+  next.onDuty = (current.onDuty || []).filter((duty) => duty.hospitalId !== "h-fy");
   next.alerts = (current.alerts || []).map((alert) => ({
     acceptedAt: "",
     respondedBy: "",
@@ -319,8 +322,16 @@ function stationName(id) {
   return state.stations.find((item) => item.id === id)?.name || "未設定分隊";
 }
 
+function stationLabel(station) {
+  return [station.city, station.brigade, station.name].filter(Boolean).join(" ");
+}
+
 function hospitalName(id) {
   return state.hospitals.find((item) => item.id === id)?.name || "未設定醫院";
+}
+
+function hospitalLabel(hospital) {
+  return [hospital.city, hospital.name].filter(Boolean).join(" ");
 }
 
 function departmentName(id) {
@@ -755,10 +766,10 @@ function renderRegister() {
           <label>電話號碼<input name="phone" required /></label>
           <label>密碼<input name="password" type="password" placeholder="未填則預設為手機號碼" /></label>
           <label class="pre-register">所屬分隊
-            <select name="stationId">${activeStations().map((station) => `<option value="${station.id}">${station.city} ${station.name}</option>`).join("")}</select>
+            <select name="stationId">${activeStations().map((station) => `<option value="${station.id}">${stationLabel(station)}</option>`).join("")}</select>
           </label>
           <label class="hospital-register" hidden>所屬醫院
-            <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospital.name}</option>`).join("")}</select>
+            <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospitalLabel(hospital)}</option>`).join("")}</select>
           </label>
           <label class="hospital-register" hidden>所屬科別
             <select name="departmentId">${activeDepartments().map((dep) => `<option value="${dep.id}">${dep.name}</option>`).join("")}</select>
@@ -874,12 +885,12 @@ function renderProfile() {
         <label>密碼<input name="password" type="password" required value="${escapeHtml(session.password || session.phone)}" /></label>
         ${session.role === "prehospital" || session.role === "admin" ? `
           <label>所屬分隊
-            <select name="stationId">${activeStations().map((station) => `<option value="${station.id}" ${station.id === session.stationId ? "selected" : ""}>${station.city} ${station.name}</option>`).join("")}</select>
+            <select name="stationId">${activeStations().map((station) => `<option value="${station.id}" ${station.id === session.stationId ? "selected" : ""}>${stationLabel(station)}</option>`).join("")}</select>
           </label>
         ` : ""}
         ${session.role === "hospital" || session.role === "admin" ? `
           <label>所屬醫院
-            <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}" ${hospital.id === session.hospitalId ? "selected" : ""}>${hospital.name}</option>`).join("")}</select>
+            <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}" ${hospital.id === session.hospitalId ? "selected" : ""}>${hospitalLabel(hospital)}</option>`).join("")}</select>
           </label>
           <label>所屬科別
             <select name="departmentId">${activeDepartments().map((department) => `<option value="${department.id}" ${department.id === session.departmentId ? "selected" : ""}>${department.name}</option>`).join("")}</select>
@@ -967,7 +978,7 @@ function renderAlertComposer() {
       </div>
       <div class="grid two">
         <input type="hidden" name="typeId" value="${type.id}" />
-        <label>後送醫院<select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospital.name}</option>`).join("")}</select></label>
+        <label>後送醫院<select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospitalLabel(hospital)}</option>`).join("")}</select></label>
       </div>
       <div class="notice" id="alertComposerMessage" ${alertComposerMessage ? "" : "hidden"}>${escapeHtml(alertComposerMessage)}</div>
       <div id="typeFlow">${renderTypeFlow(type.id)}</div>
@@ -1222,10 +1233,19 @@ function renderUnitSettingsPanel() {
   return `
     <section class="panel">
       <h2>醫院與分隊</h2>
-      <form id="hospitalForm" class="grid three"><label>醫院<input name="name" required /></label><label>縣市<input name="city" value="新北市" /></label><button type="submit">新增醫院</button></form>
-      <form id="stationForm" class="grid three"><label>分隊<input name="name" required /></label><label>縣市<input name="city" value="新北市" /></label><button type="submit">新增分隊</button></form>
-      <div class="meta"><span>醫院：${state.hospitals.map((h) => h.name).join("、")}</span></div>
-      <div class="meta"><span>分隊：${state.stations.map((s) => s.name).join("、")}</span></div>
+      <form id="hospitalForm" class="grid three">
+        <label>縣市<input name="city" value="新北市" required /></label>
+        <label>醫院<input name="name" required placeholder="例如：土城醫院" /></label>
+        <button type="submit">新增醫院</button>
+      </form>
+      <form id="stationForm" class="grid three">
+        <label>縣市<input name="city" value="新北市" required /></label>
+        <label>大隊<input name="brigade" value="第五救災救護大隊" required /></label>
+        <label>分隊<input name="name" required placeholder="例如：土城分隊" /></label>
+        <button type="submit">新增分隊</button>
+      </form>
+      <div class="meta"><span>醫院：${activeHospitals().map(hospitalLabel).join("、") || "尚未建立"}</span></div>
+      <div class="meta"><span>分隊：${activeStations().map(stationLabel).join("、") || "尚未建立"}</span></div>
     </section>
     <section class="panel">
       <h2>科別</h2>
@@ -1942,6 +1962,7 @@ function bindAdmin() {
   document.querySelector("#hospitalForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (state.hospitals.some((hospital) => hospital.city === data.city && hospital.name === data.name && hospital.active)) return alert("已有相同縣市與名稱的醫院。");
     state.hospitals.push({ id: uid("h"), active: true, ...data });
     saveState();
     render();
@@ -1949,6 +1970,7 @@ function bindAdmin() {
   document.querySelector("#stationForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (state.stations.some((station) => station.city === data.city && station.brigade === data.brigade && station.name === data.name && station.active)) return alert("已有相同縣市、大隊與名稱的分隊。");
     state.stations.push({ id: uid("s"), active: true, ...data });
     saveState();
     render();
@@ -1956,6 +1978,7 @@ function bindAdmin() {
   document.querySelector("#departmentForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (state.departments.some((department) => department.name === data.name && department.active)) return alert("已有相同名稱的科別。");
     state.departments.push({ id: uid("dep"), active: true, ...data });
     saveState();
     render();
@@ -2069,8 +2092,7 @@ function sampleCsv() {
 土城醫院,急診醫學科,陳承彬,0986994929,${today()},08:00,${today()},17:00
 土城醫院,心臟內科,請填姓名,請填手機,${today()},08:00,${today()},17:00
 土城醫院,心臟外科,請填姓名,請填手機,${today()},17:00,${today()},23:00
-亞東醫院,急診醫學科,請填姓名,請填手機,${today()},08:00,${today()},17:00
-亞東醫院,急診醫學科,夜班醫師,請填手機,${today()},20:00,${addDays(today(), 1)},08:00`;
+土城醫院,急診醫學科,夜班醫師,請填手機,${today()},20:00,${addDays(today(), 1)},08:00`;
 }
 
 function parseCsv(text) {

@@ -10,3 +10,4 @@ EMS_EKG_Android_測試版.apk
 EMS_EKG_Android_推播準備版.apk
 EMS_EKG_Android_Firebase版.apk
 android/app/google-services.json
+ios/App/App/GoogleService-Info.plist
