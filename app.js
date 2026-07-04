@@ -1333,7 +1333,7 @@ function renderUnitSettingsPanel() {
           </select>
         </label>
       </div>
-      <form id="hospitalForm" class="grid two">
+      <form id="hospitalForm" class="grid two unit-form">
         <input type="hidden" name="city" value="${unitHospitalCity}" />
         <label>醫院<input name="name" required placeholder="例如：土城醫院" /></label>
         <button type="submit">新增醫院</button>
@@ -1350,12 +1350,12 @@ function renderUnitSettingsPanel() {
           </select>
         </label>
       </div>
-      <form id="brigadeForm" class="grid two">
+      <form id="brigadeForm" class="grid two unit-form">
         <input type="hidden" name="city" value="${unitStationCity}" />
         <label>大隊<input name="name" required placeholder="例如：第五救災救護大隊" /></label>
         <button type="submit">新增大隊</button>
       </form>
-      <form id="stationForm" class="grid two">
+      <form id="stationForm" class="grid two unit-form">
         <input type="hidden" name="city" value="${unitStationCity}" />
         <input type="hidden" name="brigadeId" value="${unitBrigadeId}" />
         <label>分隊<input name="name" required placeholder="例如：土城分隊" /></label>
@@ -1369,15 +1369,21 @@ function renderUnitSettingsPanel() {
 function renderHospitalUnitCard(hospital, departments = activeDepartmentsForHospital(hospital.id)) {
   return `
     <div class="item">
-      <strong>${hospitalLabel(hospital)}</strong>
-      <div class="meta"><span>科別：${departments.map((department) => department.name).join("、") || "尚未建立"}</span></div>
-      <form class="grid three hospital-department-form" data-hospital-id="${hospital.id}">
+      <div class="toolbar">
+        <strong>${hospitalLabel(hospital)}</strong>
+        <button type="button" class="secondary remove-hospital" data-id="${hospital.id}">移除醫院</button>
+      </div>
+      <form class="grid two unit-form hospital-department-form" data-hospital-id="${hospital.id}">
         <label>新增此院科別<input name="name" required placeholder="例如：心臟內科" /></label>
         <button type="submit">新增科別</button>
-        <button type="button" class="secondary remove-hospital" data-id="${hospital.id}">移除醫院</button>
       </form>
-      <div class="meta">
-        ${departments.map((department) => `<button type="button" class="secondary remove-department" data-id="${department.id}">移除 ${department.name}</button>`).join("")}
+      <div class="unit-list">
+        ${departments.length ? departments.map((department) => `
+          <div class="unit-row">
+            <span>${department.name}</span>
+            <button type="button" class="secondary remove-department" data-id="${department.id}">移除</button>
+          </div>
+        `).join("") : `<div class="unit-row"><span class="muted">此醫院尚未建立科別</span></div>`}
       </div>
     </div>
   `;
@@ -1386,18 +1392,20 @@ function renderHospitalUnitCard(hospital, departments = activeDepartmentsForHosp
 function renderBrigadeUnitCard(brigade, stations = activeStationsForBrigade(brigade.id)) {
   return `
     <div class="item">
-      <strong>${brigade.city} ${brigade.name}</strong>
-      <div class="meta"><button type="button" class="secondary remove-brigade" data-id="${brigade.id}">移除大隊</button></div>
-      <div class="list">${stations.map(renderStationUnitCard).join("") || `<div class="muted">此大隊尚未建立分隊</div>`}</div>
+      <div class="toolbar">
+        <strong>${brigade.city} ${brigade.name}</strong>
+        <button type="button" class="secondary remove-brigade" data-id="${brigade.id}">移除大隊</button>
+      </div>
+      <div class="unit-list">${stations.map(renderStationUnitCard).join("") || `<div class="unit-row"><span class="muted">此大隊尚未建立分隊</span></div>`}</div>
     </div>
   `;
 }
 
 function renderStationUnitCard(station) {
   return `
-    <div class="item">
-      <strong>${stationLabel(station)}</strong>
-      <div class="meta"><button type="button" class="secondary remove-station" data-id="${station.id}">移除分隊</button></div>
+    <div class="unit-row">
+      <span>${stationLabel(station)}</span>
+      <button type="button" class="secondary remove-station" data-id="${station.id}">移除</button>
     </div>
   `;
 }

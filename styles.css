@@ -307,6 +307,19 @@ label {
   align-items: end;
 }
 
+.admin-page > .grid.two {
+  align-items: start;
+}
+
+.unit-form {
+  align-items: end;
+}
+
+.unit-form button {
+  align-self: end;
+  min-height: 40px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -314,6 +327,7 @@ label {
   box-shadow: 0 6px 20px rgba(28, 42, 55, 0.06);
   display: grid;
   gap: 14px;
+  align-content: start;
   padding: 18px;
 }
 
@@ -420,6 +434,31 @@ label {
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.unit-list {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.unit-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+.unit-row + .unit-row {
+  border-top: 1px solid var(--line);
+}
+
+.unit-row button {
+  min-height: 34px;
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 .item-head {
