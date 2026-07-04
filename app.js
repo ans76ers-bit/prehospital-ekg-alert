@@ -8,6 +8,8 @@ const ALERT_IMAGES_TO_KEEP = 3;
 const EKG_IMAGE_MAX_WIDTH = 900;
 const EKG_IMAGE_QUALITY = 0.62;
 const TAIWAN_CITIES = ["基隆市", "臺北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "臺中市", "彰化縣", "南投縣", "雲林縣", "嘉義市", "嘉義縣", "臺南市", "高雄市", "屏東縣", "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"];
+const RETIRED_HOSPITAL_NAMES = ["亞東醫院", "為恭醫院", "違工醫院"];
+const RETIRED_HOSPITAL_IDS = ["h-fy"];
 const AGE_RANGE_OPTIONS = ["不詳", "0-10", "10-20", "20-30", "30-40", "40-50", "50-60", "60-70", "70-80", "80以上"];
 const GENDER_OPTIONS = ["不詳", "男", "女"];
 const FIXED_ALERT_TYPE_ORDER = ["stemi", "ohca", "trauma", "stroke"];
@@ -173,7 +175,7 @@ function migrateState(current) {
       brigade: brigade?.name || brigadeName,
     };
   });
-  next.hospitals = mergeByName(seed.hospitals, current.hospitals || []).filter((hospital) => hospital.id !== "h-fy" && hospital.name !== "亞東醫院");
+  next.hospitals = mergeByName(seed.hospitals, current.hospitals || []).filter((hospital) => !isRetiredHospital(hospital));
   next.departments = mergeDepartments(seed.departments, current.departments || []).map((department) => {
     const clean = { ...department, name: department.id === "dep-er" ? "急診醫學科" : department.name };
     delete clean.hospitalId;
@@ -186,7 +188,7 @@ function migrateState(current) {
       password: user.password || user.phone,
       stationId: user.stationId === "s-banqiao" ? "s-tucheng" : user.role === "admin" && !user.stationId ? "s-tucheng" : user.stationId,
     }));
-  next.onDuty = (current.onDuty || []).filter((duty) => duty.hospitalId !== "h-fy");
+  next.onDuty = (current.onDuty || []).filter((duty) => !RETIRED_HOSPITAL_IDS.includes(duty.hospitalId));
   next.alerts = (current.alerts || []).map((alert) => ({
     acceptedAt: "",
     respondedBy: "",
@@ -416,6 +418,10 @@ function hospitalName(id) {
   return state.hospitals.find((item) => item.id === id)?.name || "未設定醫院";
 }
 
+function isRetiredHospital(hospital) {
+  return Boolean(hospital && (RETIRED_HOSPITAL_IDS.includes(hospital.id) || RETIRED_HOSPITAL_NAMES.includes(hospital.name)));
+}
+
 function hospitalLabel(hospital) {
   return [hospital.city, hospital.name].filter(Boolean).join(" ");
 }
@@ -441,7 +447,7 @@ function userById(id) {
 }
 
 function activeHospitals() {
-  return state.hospitals.filter((item) => item.active);
+  return state.hospitals.filter((item) => item.active && !isRetiredHospital(item));
 }
 
 function activeHospitalsForCity(city) {
@@ -1910,11 +1916,13 @@ function renderAlertTypeAdmin(type) {
   return `
     <article class="item">
       <strong>${type.name}</strong>
-      <label>通知科別
-        <select class="route-departments-input" data-id="${type.id}" multiple>
-          ${activeDepartments().map((department) => `<option value="${department.id}" ${(type.routeDepartments || []).includes(department.id) ? "selected" : ""}>${department.name}</option>`).join("")}
-        </select>
-      </label>
+      <div class="field-label">通知科別</div>
+      <div class="department-toggle-grid" data-alert-type-id="${type.id}">
+        ${activeDepartments().map((department) => {
+          const selected = (type.routeDepartments || []).includes(department.id);
+          return `<button type="button" class="department-toggle ${selected ? "selected" : ""}" data-department-id="${department.id}" aria-pressed="${selected ? "true" : "false"}">${department.name}</button>`;
+        }).join("")}
+      </div>
       <div class="small muted">院前端選擇醫院後，只會通知該醫院中符合以上科別且當班的人員。</div>
       <label>提示文字<textarea class="prompt-input" data-id="${type.id}">${escapeHtml(type.prompt)}</textarea></label>
       <div class="actions"><button class="secondary save-alert-type" data-id="${type.id}">儲存設定</button></div>
@@ -2530,10 +2538,15 @@ function bindAdmin() {
     saveState();
     render();
   }));
+  document.querySelectorAll(".department-toggle").forEach((button) => button.addEventListener("click", () => {
+    const selected = !button.classList.contains("selected");
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  }));
   document.querySelectorAll(".save-alert-type").forEach((button) => button.addEventListener("click", () => {
     const type = alertType(button.dataset.id);
-    const routeSelect = document.querySelector(`.route-departments-input[data-id="${button.dataset.id}"]`);
-    const routeDepartments = routeSelect ? Array.from(routeSelect.selectedOptions).map((option) => option.value) : [];
+    const routeButtons = document.querySelectorAll(`.department-toggle-grid[data-alert-type-id="${button.dataset.id}"] .department-toggle.selected`);
+    const routeDepartments = Array.from(routeButtons).map((item) => item.dataset.departmentId);
     if (!routeDepartments.length) return alert("請至少選擇一個通知科別。");
     type.routeDepartments = routeDepartments;
     type.prompt = document.querySelector(`.prompt-input[data-id="${button.dataset.id}"]`).value;

@@ -105,6 +105,11 @@ label {
   font-size: 13px;
 }
 
+.field-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .shell {
   min-height: 100vh;
 }
@@ -357,6 +362,33 @@ label {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.department-toggle-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.department-toggle {
+  background: #e7edf2;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  min-height: 38px;
+}
+
+.department-toggle:hover {
+  background: #dbe5ed;
+}
+
+.department-toggle.selected {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: white;
+}
+
+.department-toggle.selected:hover {
+  background: var(--brand-dark);
 }
 
 .status {
