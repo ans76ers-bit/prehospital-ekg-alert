@@ -21,6 +21,7 @@ const DEFAULT_ECMO_CRITERIA = [
   "預估報案後 40 分鐘內可抵達醫院",
   "無明顯大出血",
 ].join("\n");
+const ACCEPTED_RING_GRACE_MS = 10000;
 
 const dateKey = (date = new Date()) => {
   const local = new Date(date);
@@ -113,7 +114,7 @@ let uploadImage = "";
 let uploadImageInfo = "";
 let selectedAlertTypeId = "";
 let selectedAlertId = "";
-let audio = { context: null, oscillator: null, gain: null, timer: null };
+let audio = { context: null, oscillator: null, gain: null, timer: null, autoStopTimer: null };
 let pendingDeletedUserIds = [];
 let pendingDeletedDutyIds = [];
 let pendingCanceledAlertIds = [];
@@ -191,6 +192,7 @@ function migrateState(current) {
   next.onDuty = (current.onDuty || []).filter((duty) => !RETIRED_HOSPITAL_IDS.includes(duty.hospitalId));
   next.alerts = (current.alerts || []).map((alert) => ({
     acceptedAt: "",
+    acceptedMs: 0,
     respondedBy: "",
     respondedAt: "",
     response: "",
@@ -444,6 +446,13 @@ function alertType(id) {
 
 function userById(id) {
   return state.users.find((item) => item.id === id);
+}
+
+function clinicianLabel(user) {
+  if (!user) return "尚未";
+  const department = user.departmentId ? departmentName(user.departmentId) : "";
+  const suffix = user.name?.includes("醫師") ? "" : "醫師";
+  return [department, `${user.name}${suffix}`].filter(Boolean).join(" ");
 }
 
 function activeHospitals() {
@@ -772,6 +781,7 @@ function recipientsFor(hospitalId, departments) {
       hospitalId: user.hospitalId,
       departmentId: user.departmentId,
       acceptedAt: "",
+      acceptedMs: 0,
     }));
 }
 
@@ -798,6 +808,7 @@ function createAlert({ typeId, hospitalId, extra, image }) {
     status: recipients.length ? "notified" : "no-duty",
     acceptedBy: "",
     acceptedAt: "",
+    acceptedMs: 0,
     response: "",
     responseNote: "",
     respondedBy: "",
@@ -1022,6 +1033,47 @@ function renderDashboard() {
   if (session.role === "hospital") return renderHospitalUser();
   if (view === "alertType") return renderAlertTypeChooser();
   return view === "alert" ? renderAlertComposer() : renderPrehospitalHome();
+}
+
+function currentAlertRecipient(alert) {
+  if (!session?.id) return null;
+  return alert.recipients?.find((recipient) => recipient.userId === session.id) || null;
+}
+
+function acceptedElapsedMs(alert) {
+  const acceptedMs = Number(alert.acceptedMs || 0);
+  if (acceptedMs) return Date.now() - acceptedMs;
+  const parsed = Date.parse(alert.acceptedAt || "");
+  return Number.isNaN(parsed) ? 0 : Date.now() - parsed;
+}
+
+function shouldRingForCurrentUser(alert) {
+  const recipient = currentAlertRecipient(alert);
+  if (!recipient) return false;
+  if (recipient.acceptedAt) return false;
+  if (alert.status === "notified") return true;
+  if (alert.status === "accepted" && alert.acceptedBy !== session.id) {
+    const elapsed = acceptedElapsedMs(alert);
+    return elapsed ? elapsed < ACCEPTED_RING_GRACE_MS : true;
+  }
+  return false;
+}
+
+function ringingAlertsForCurrentUser() {
+  return hospitalRelevantAlerts().filter(shouldRingForCurrentUser);
+}
+
+function alertDecisionMeta(alert) {
+  const acceptedUser = alert.acceptedBy ? userById(alert.acceptedBy) : null;
+  const responseUser = alert.respondedBy ? userById(alert.respondedBy) : null;
+  const acceptedText = acceptedUser ? `${clinicianLabel(acceptedUser)} 接收` : "尚未有人接收";
+  const decisionText = alert.response ? `${clinicianLabel(responseUser || acceptedUser)} 決定：${alert.response}` : "尚未決定啟動/不啟動";
+  return `
+    <div class="meta">
+      <span>接收狀態：${acceptedText}</span>
+      <span>決定狀態：${decisionText}</span>
+    </div>
+  `;
 }
 
 function renderPrehospitalHome() {
@@ -1339,6 +1391,7 @@ function renderAlertCard(alert) {
         <span>接收：${accepted ? accepted.name : "尚未"}</span>
         <span>通知：${recipientText}</span>
       </div>
+      ${alertDecisionMeta(alert)}
       <div class="meta"><span>性別：${alert.sex || alert.extra?.sex || "不詳"}</span><span>年齡：${alert.ageRange || alert.extra?.ageRange || "不詳"}</span></div>
       ${alert.response ? `<div class="${alert.response === "啟動" ? "result-stemi" : "result-non"}">回覆：${alert.response}</div>` : ""}
       <div class="actions">
@@ -1351,7 +1404,7 @@ function renderAlertCard(alert) {
 
 function renderHospitalUser() {
   const relevant = hospitalRelevantAlerts().slice().reverse();
-  const pendingAlerts = relevant.filter((alert) => alert.status === "notified");
+  const pendingAlerts = ringingAlertsForCurrentUser().slice().reverse();
   const recentAlerts = relevant.slice(0, 3);
   const historyAlerts = relevant.slice(3);
   const ringing = pendingAlerts.length > 0;
@@ -1376,7 +1429,7 @@ function renderHospitalUser() {
       </section>
       <section class="panel">
         <h2>通知規則</h2>
-        <div class="notice">只通知後送醫院與對應科別的當班醫師；第一位醫師按下接收後，其他醫師不再需要回覆。</div>
+        <div class="notice">沒有人接收前會持續提醒；第一位醫師接收後負責決定啟動/不啟動，其他醫師仍會短暫提醒，直到自己按接收或超過 10 秒後停止。</div>
       </section>
     </section>
   `;
@@ -1394,8 +1447,12 @@ function hospitalRelevantAlerts() {
 function renderHospitalAlert(alert) {
   const acceptedByMe = alert.acceptedBy === session.id;
   const acceptedByOther = alert.acceptedBy && alert.acceptedBy !== session.id;
+  const recipient = currentAlertRecipient(alert);
+  const recipientAccepted = Boolean(recipient?.acceptedAt);
+  const shouldRing = shouldRingForCurrentUser(alert);
+  const canAcknowledge = recipient && !recipientAccepted && ["notified", "accepted"].includes(alert.status);
   return `
-    <article class="item ${alert.status === "notified" ? "critical" : ""}">
+    <article class="item ${shouldRing ? "critical" : ""}">
       <div class="item-head">
         <div>
           <strong>${alertType(alert.typeId)?.name || alert.typeId}</strong>
@@ -1403,13 +1460,15 @@ function renderHospitalAlert(alert) {
         </div>
         <span class="status ${statusClass(alert.status)}">${statusText(alert.status)}</span>
       </div>
+      ${alertDecisionMeta(alert)}
       <div class="meta"><span>性別：${alert.sex || alert.extra?.sex || "不詳"}</span><span>年齡：${alert.ageRange || alert.extra?.ageRange || "不詳"}</span></div>
       <div class="small">${escapeHtml(alert.extraText || alert.extra?.text || alert.extra || "")}</div>
       <div class="actions">
         <button class="secondary view-alert" data-id="${alert.id}">檢視</button>
-        ${alert.status === "notified" ? `<button class="accept-alert" data-id="${alert.id}">接收</button>` : ""}
+        ${canAcknowledge ? `<button class="accept-alert" data-id="${alert.id}">${alert.status === "accepted" ? "接收並停止提醒" : "接收"}</button>` : ""}
         ${acceptedByMe && alert.status === "accepted" ? `<button class="reply-alert danger" data-id="${alert.id}" data-response="啟動">啟動</button><button class="reply-alert" data-id="${alert.id}" data-response="不啟動">不啟動</button><button class="callback-alert secondary" data-id="${alert.id}">回撥電話</button>` : ""}
-        ${acceptedByOther ? `<span class="status opened">已由 ${userById(alert.acceptedBy)?.name || "其他醫師"} 接收</span>` : ""}
+        ${acceptedByOther ? `<span class="status opened">已由 ${clinicianLabel(userById(alert.acceptedBy))} 接收</span>` : ""}
+        ${recipientAccepted && !acceptedByMe ? `<span class="status done">你已停止提醒</span>` : ""}
       </div>
     </article>
   `;
@@ -1894,6 +1953,7 @@ function renderAdminAlertRecord(alert) {
         <span>發送時間：${alert.createdAt}</span>
       </div>
       <div class="meta"><span>通知名單：${recipientText}</span></div>
+      ${alertDecisionMeta(alert)}
       <div class="meta">
         <span>接收醫師：${acceptedUser?.name || "尚未"}</span>
         <span>接收時間：${alert.acceptedAt || "尚未"}</span>
@@ -2312,34 +2372,43 @@ function buildExtra(data, type) {
 function bindHospitalUser() {
   document.querySelectorAll(".accept-alert").forEach((button) => button.addEventListener("click", () => {
     const item = state.alerts.find((alert) => alert.id === button.dataset.id);
-    if (!item || item.status !== "notified") return;
-    item.status = "accepted";
-    item.acceptedBy = session.id;
-    item.acceptedAt = nowText();
+    if (!item || !["notified", "accepted"].includes(item.status)) return;
     const recipient = item.recipients.find((r) => r.userId === session.id);
-    if (recipient) recipient.acceptedAt = item.acceptedAt;
-    item.audit.push(`${nowText()} ${session.name} 接收通報`);
-    stopAlarm();
+    if (!recipient || recipient.acceptedAt) return;
+    const acceptedAt = nowText();
+    recipient.acceptedAt = acceptedAt;
+    recipient.acceptedMs = Date.now();
+    if (item.status === "notified") {
+      item.status = "accepted";
+      item.acceptedBy = session.id;
+      item.acceptedAt = acceptedAt;
+      item.acceptedMs = recipient.acceptedMs;
+      item.audit.push(`${acceptedAt} ${clinicianLabel(session)} 接收通報，負責決定啟動/不啟動`);
+    } else {
+      item.audit.push(`${acceptedAt} ${clinicianLabel(session)} 接收通知並停止自己的提醒`);
+    }
     saveState();
     render();
   }));
   document.querySelectorAll(".reply-alert").forEach((button) => button.addEventListener("click", () => {
     const item = state.alerts.find((alert) => alert.id === button.dataset.id);
+    if (!item || item.acceptedBy !== session.id) return;
     item.response = button.dataset.response;
     item.respondedBy = session.id;
     item.respondedAt = nowText();
     item.status = button.dataset.response === "啟動" ? "activated" : "declined";
-    item.audit.push(`${nowText()} ${session.name} 回覆：${button.dataset.response}`);
+    item.audit.push(`${nowText()} ${clinicianLabel(session)} 決定：${button.dataset.response}`);
     saveState();
     render();
   }));
   document.querySelectorAll(".callback-alert").forEach((button) => button.addEventListener("click", () => {
     const item = state.alerts.find((alert) => alert.id === button.dataset.id);
+    if (!item || item.acceptedBy !== session.id) return;
     item.response = "回撥電話";
     item.respondedBy = session.id;
     item.respondedAt = nowText();
     item.status = "callback";
-    item.audit.push(`${nowText()} ${session.name} 選擇回撥 ${item.sender.phone}`);
+    item.audit.push(`${nowText()} ${clinicianLabel(session)} 選擇回撥 ${item.sender.phone}`);
     saveState();
     window.location.href = `tel:${item.sender.phone}`;
     render();
@@ -2754,7 +2823,7 @@ async function registerNativePushToken() {
     });
     await PushNotifications.addListener("pushNotificationReceived", async () => {
       await loadStateFromServer();
-      const pending = hospitalRelevantAlerts().filter((alert) => alert.status === "notified");
+      const pending = ringingAlertsForCurrentUser();
       if (pending.length) triggerAlertReminders(pending);
       render();
     });
@@ -2840,11 +2909,26 @@ async function showDeviceNotification(alert) {
 
 function triggerAlertReminders(alerts) {
   startAlarm();
+  scheduleAlarmAutoStop(alerts);
   alerts.forEach((alert) => {
     if (notifiedAlertIds.has(alert.id)) return;
     notifiedAlertIds.add(alert.id);
     showDeviceNotification(alert);
   });
+}
+
+function scheduleAlarmAutoStop(alerts) {
+  if (audio.autoStopTimer) window.clearTimeout(audio.autoStopTimer);
+  audio.autoStopTimer = null;
+  const remainingTimes = alerts
+    .filter((alert) => alert.status === "accepted" && alert.acceptedBy !== session?.id)
+    .map((alert) => ACCEPTED_RING_GRACE_MS - acceptedElapsedMs(alert))
+    .filter((ms) => ms > 0);
+  if (!remainingTimes.length) return;
+  audio.autoStopTimer = window.setTimeout(() => {
+    stopAlarmIfNotNeeded();
+    render();
+  }, Math.min(...remainingTimes) + 50);
 }
 
 async function playAlertTone() {
@@ -2912,13 +2996,15 @@ function stopAlarmIfNotNeeded() {
     stopAlarm();
     return;
   }
-  const hasPending = hospitalRelevantAlerts().some((alert) => alert.status === "notified");
+  const hasPending = ringingAlertsForCurrentUser().length > 0;
   if (!hasPending) stopAlarm();
 }
 
 function stopAlarm() {
   if (audio.timer) window.clearInterval(audio.timer);
+  if (audio.autoStopTimer) window.clearTimeout(audio.autoStopTimer);
   audio.timer = null;
+  audio.autoStopTimer = null;
   if (navigator.vibrate) navigator.vibrate(0);
   try {
     nativePlugins().LocalNotifications?.cancel?.({
