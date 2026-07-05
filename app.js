@@ -121,8 +121,12 @@ let pendingDeletedUserIds = [];
 let pendingDeletedDutyIds = [];
 let pendingCanceledAlertIds = [];
 let authMessage = "";
+let registerRole = "prehospital";
+let registerHospitalCity = "新北市";
+let registerHospitalId = "h-tu";
 let dutyRosterDate = today();
-let dutyHospitalFilter = "all";
+let dutyHospitalCity = "新北市";
+let dutyHospitalFilter = "h-tu";
 let unitHospitalCity = "新北市";
 let unitHospitalId = "h-tu";
 let unitStationCity = "新北市";
@@ -472,6 +476,32 @@ function activeHospitals() {
 
 function activeHospitalsForCity(city) {
   return activeHospitals().filter((hospital) => hospital.city === city);
+}
+
+function activeHospitalCities() {
+  return [...new Set(activeHospitals().map((hospital) => hospital.city).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-Hant"));
+}
+
+function hospitalCityOptions(selectedCity) {
+  const cities = activeHospitalCities();
+  const source = cities.length ? cities : TAIWAN_CITIES;
+  return source.map((city) => `<option value="${city}" ${city === selectedCity ? "selected" : ""}>${city}</option>`).join("");
+}
+
+function normalizeRegisterHospitalSelection() {
+  const cities = activeHospitalCities();
+  if (!cities.includes(registerHospitalCity)) registerHospitalCity = cities[0] || "新北市";
+  const hospitals = activeHospitalsForCity(registerHospitalCity);
+  if (!hospitals.some((hospital) => hospital.id === registerHospitalId)) registerHospitalId = hospitals[0]?.id || "";
+  return hospitals;
+}
+
+function normalizeDutyHospitalSelection() {
+  const cities = activeHospitalCities();
+  if (!cities.includes(dutyHospitalCity)) dutyHospitalCity = cities[0] || "新北市";
+  const hospitals = activeHospitalsForCity(dutyHospitalCity);
+  if (!hospitals.some((hospital) => hospital.id === dutyHospitalFilter)) dutyHospitalFilter = hospitals[0]?.id || "";
+  return hospitals;
 }
 
 function activeStations() {
@@ -955,6 +985,8 @@ function renderLogin() {
 }
 
 function renderRegister() {
+  const registerHospitals = normalizeRegisterHospitalSelection();
+  const isHospitalRegister = registerRole === "hospital";
   return `
     <section class="login">
       <form class="login-panel" id="registerForm">
@@ -963,24 +995,28 @@ function renderRegister() {
           <p>原則上帳號需由管理者核准或事先造冊；Demo 會先列為待審核。</p>
         </div>
         <div class="tabs">
-          <button type="button" class="active" data-register-role="prehospital">院前端</button>
-          <button type="button" data-register-role="hospital">院後端</button>
+          <button type="button" class="${registerRole === "prehospital" ? "active" : ""}" data-register-role="prehospital">院前端</button>
+          <button type="button" class="${registerRole === "hospital" ? "active" : ""}" data-register-role="hospital">院後端</button>
         </div>
-        <input type="hidden" name="role" value="prehospital" />
+        <input type="hidden" name="role" value="${registerRole}" />
         <div class="grid two">
           <label>姓名<input name="name" required /></label>
           <label>電話號碼<input name="phone" required /></label>
           <label>密碼<input name="password" type="password" placeholder="未填則預設為手機號碼" /></label>
-          <label class="pre-register">所屬分隊
+          <label class="pre-register" ${isHospitalRegister ? "hidden" : ""}>所屬分隊
             <select name="stationId">${activeStations().map((station) => `<option value="${station.id}">${stationLabel(station)}</option>`).join("")}</select>
           </label>
-          <label class="hospital-register" hidden>所屬醫院
-            <select name="hospitalId">${activeHospitals().map((hospital) => `<option value="${hospital.id}">${hospitalLabel(hospital)}</option>`).join("")}</select>
+          <label class="hospital-register" ${isHospitalRegister ? "" : "hidden"}>所屬縣市
+            <select id="registerHospitalCity">${hospitalCityOptions(registerHospitalCity)}</select>
           </label>
-          <label class="hospital-register" hidden>所屬科別
+          <label class="hospital-register" ${isHospitalRegister ? "" : "hidden"}>所屬醫院
+            <select name="hospitalId" id="registerHospitalId">${registerHospitals.map((hospital) => `<option value="${hospital.id}" ${hospital.id === registerHospitalId ? "selected" : ""}>${hospital.name}</option>`).join("")}</select>
+          </label>
+          <label class="hospital-register" ${isHospitalRegister ? "" : "hidden"}>所屬科別
             <select name="departmentId">${activeDepartments().map((dep) => `<option value="${dep.id}">${departmentLabel(dep)}</option>`).join("")}</select>
           </label>
         </div>
+        <div class="notice hospital-register" ${isHospitalRegister ? "" : "hidden"}>如果你所屬的醫院沒有在選單中，請洽管理者先於單位設定新增醫院後再註冊。</div>
         <div class="actions">
           <button type="submit">送出註冊申請</button>
           <button type="button" class="secondary public-action" data-view="home">返回</button>
@@ -989,7 +1025,6 @@ function renderRegister() {
     </section>
   `;
 }
-
 function renderShell() {
   return `
     <div class="shell">
@@ -1729,18 +1764,19 @@ function renderAlertSettingsPanel() {
 }
 
 function renderDutyPanel() {
-  const hospitalOptions = [`<option value="all">全部醫院</option>`]
-    .concat(activeHospitals().map((hospital) => `<option value="${hospital.id}" ${dutyHospitalFilter === hospital.id ? "selected" : ""}>${hospital.name}</option>`))
-    .join("");
+  const dutyHospitals = normalizeDutyHospitalSelection();
+  const dutyDoctors = hospitalDoctors().filter((doctor) => doctor.hospitalId === dutyHospitalFilter);
+  const hospitalOptions = dutyHospitals.map((hospital) => `<option value="${hospital.id}" ${dutyHospitalFilter === hospital.id ? "selected" : ""}>${hospital.name}</option>`).join("");
   return `
     <section class="panel wide-panel">
       <h2>當班人員與班表匯入</h2>
       ${hospitalDoctors().length ? "" : `<div class="notice">目前沒有已核准的院後端醫師。請先讓醫師註冊院後端帳號，或在帳號管理中核准後再排班。</div>`}
+      ${dutyHospitalFilter && !dutyDoctors.length ? `<div class="notice">所選醫院目前沒有已核准的院後端醫師。</div>` : ""}
       <form id="manualDutyForm" class="grid three">
         <label>院後端醫師
           <select name="userId" required>
             <option value="">請選擇已註冊醫師</option>
-            ${hospitalDoctors().map((doctor) => `<option value="${doctor.id}">${doctor.name} / ${hospitalName(doctor.hospitalId)} / ${departmentName(doctor.departmentId)}</option>`).join("")}
+            ${dutyDoctors.map((doctor) => `<option value="${doctor.id}">${doctor.name} / ${departmentName(doctor.departmentId)}</option>`).join("")}
           </select>
         </label>
         <label>開始日期<input name="dutyDate" type="date" value="${today()}" required /></label>
@@ -1752,7 +1788,8 @@ function renderDutyPanel() {
       <div class="notice">排班只從已核准的院後端醫師帳號選取；醫院與科別會沿用該醫師帳號資料。跨午夜班請把結束日期選到隔天，例如今天下午 08:00 到明天上午 08:00。</div>
       <section class="duty-roster-controls">
         <label>查看日期<input id="dutyRosterDate" type="date" value="${dutyRosterDate}" /></label>
-        <label>醫院篩選<select id="dutyHospitalFilter">${hospitalOptions}</select></label>
+        <label>醫院縣市<select id="dutyHospitalCity">${hospitalCityOptions(dutyHospitalCity)}</select></label>
+        <label>醫院<select id="dutyHospitalFilter">${hospitalOptions}</select></label>
       </section>
       ${renderDutyRoster()}
       <label>CSV 匯入<textarea id="scheduleCsv">${sampleCsv()}</textarea></label>
@@ -1763,16 +1800,14 @@ function renderDutyPanel() {
     </section>
   `;
 }
-
 function renderDutyRoster() {
-  const hospitals = activeHospitals().filter((hospital) => dutyHospitalFilter === "all" || hospital.id === dutyHospitalFilter);
+  const hospitals = activeHospitals().filter((hospital) => hospital.id === dutyHospitalFilter);
   return `
     <section class="duty-roster">
       ${hospitals.map(renderHospitalDutySection).join("") || `<div class="muted">沒有符合條件的醫院</div>`}
     </section>
   `;
 }
-
 function renderHospitalDutySection(hospital) {
   const duties = state.onDuty.filter((duty) => dutyIntersectsDate(duty, dutyRosterDate) && duty.hospitalId === hospital.id);
   const activeDepartmentIds = new Set([...activeDepartments().map((department) => department.id), ...duties.map((duty) => duty.departmentId)]);
@@ -2110,13 +2145,29 @@ function bindPublic() {
   document.querySelectorAll("[data-register-role]").forEach((button) => button.addEventListener("click", () => {
     document.querySelectorAll("[data-register-role]").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
-    document.querySelector("[name='role']").value = button.dataset.registerRole;
-    document.querySelectorAll(".pre-register").forEach((item) => (item.hidden = button.dataset.registerRole !== "prehospital"));
-    document.querySelectorAll(".hospital-register").forEach((item) => (item.hidden = button.dataset.registerRole !== "hospital"));
+    registerRole = button.dataset.registerRole;
+    document.querySelector("[name='role']").value = registerRole;
+    document.querySelectorAll(".pre-register").forEach((item) => (item.hidden = registerRole !== "prehospital"));
+    document.querySelectorAll(".hospital-register").forEach((item) => (item.hidden = registerRole !== "hospital"));
   }));
+  document.querySelector("#registerHospitalCity")?.addEventListener("change", (event) => {
+    registerHospitalCity = event.currentTarget.value || registerHospitalCity;
+    const hospitals = normalizeRegisterHospitalSelection();
+    const hospitalSelect = document.querySelector("#registerHospitalId");
+    if (hospitalSelect) {
+      hospitalSelect.innerHTML = hospitals.map((hospital) => `<option value="${hospital.id}" ${hospital.id === registerHospitalId ? "selected" : ""}>${hospital.name}</option>`).join("");
+    }
+  });
+  document.querySelector("#registerHospitalId")?.addEventListener("change", (event) => {
+    registerHospitalId = event.currentTarget.value || "";
+  });
   document.querySelector("#registerForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (data.role === "hospital" && !data.hospitalId) {
+      alert("請先選擇所屬醫院；若醫院不在選單中，請洽管理者新增。");
+      return;
+    }
     if (data.role === "hospital" && !departmentBelongsToHospital(data.departmentId, data.hospitalId)) {
       alert("院後端科別必須屬於所選醫院，請重新選擇。");
       return;
@@ -2607,7 +2658,7 @@ function bindAdmin() {
     if (!confirm(`確定要移除 ${hospital.name}？此醫院的排班也會停用，但歷史通報仍會保留。`)) return;
     hospital.active = false;
     state.onDuty = state.onDuty.filter((duty) => duty.hospitalId !== hospital.id);
-    if (dutyHospitalFilter === hospital.id) dutyHospitalFilter = "all";
+    if (dutyHospitalFilter === hospital.id) dutyHospitalFilter = activeHospitalsForCity(dutyHospitalCity).find((item) => item.id !== hospital.id)?.id || "";
     if (unitHospitalId === hospital.id) unitHospitalId = activeHospitalsForCity(unitHospitalCity).find((item) => item.id !== hospital.id)?.id || "";
     saveState();
     render();
@@ -2685,8 +2736,14 @@ function bindAdmin() {
     dutyRosterDate = event.currentTarget.value || today();
     render();
   });
+  document.querySelector("#dutyHospitalCity")?.addEventListener("change", (event) => {
+    dutyHospitalCity = event.currentTarget.value || dutyHospitalCity;
+    const hospitals = normalizeDutyHospitalSelection();
+    dutyHospitalFilter = hospitals[0]?.id || "";
+    render();
+  });
   document.querySelector("#dutyHospitalFilter")?.addEventListener("change", (event) => {
-    dutyHospitalFilter = event.currentTarget.value || "all";
+    dutyHospitalFilter = event.currentTarget.value || "";
     render();
   });
   document.querySelectorAll(".toggle-duty").forEach((button) => button.addEventListener("click", () => {
