@@ -58,7 +58,7 @@ const seed = {
     { id: "dep-cardio", name: "心臟內科", active: true },
     { id: "dep-cvs", name: "心臟外科", active: true },
     { id: "dep-neuro", name: "神經內科", active: true },
-    { id: "dep-other", name: "其他科", active: true },
+    { id: "dep-other", name: "其他科", active: false },
   ],
   users: [
     {
@@ -85,7 +85,8 @@ const seed = {
     {
       id: "ohca",
       name: "內科 OHCA",
-      routeDepartments: ["dep-er", "dep-cvs"],
+      routeDepartments: ["dep-er"],
+      ecmoRouteDepartments: ["dep-er", "dep-cvs"],
       active: true,
       prompt: `院前啟動 ECMO 參考標準：\n${DEFAULT_ECMO_CRITERIA}\n\n本段文字可由管理者修改。`,
     },
@@ -129,6 +130,7 @@ let unitBrigadeId = "b-ntpc-5";
 let alertHospitalCity = "";
 let alertAudioUnlocked = false;
 let pushRegistrationStarted = false;
+let nativePushToken = "";
 let alertComposerMessage = "";
 let historyExpanded = false;
 let hospitalHistoryExpanded = false;
@@ -217,7 +219,8 @@ function migrateState(current) {
       return {
         ...nextType,
         name: "內科 OHCA",
-        routeDepartments: ["dep-er", "dep-cvs"],
+        routeDepartments: ["dep-er"],
+        ecmoRouteDepartments: type.ecmoRouteDepartments?.length ? type.ecmoRouteDepartments : ["dep-er", "dep-cvs"],
         prompt: type.prompt?.includes("年齡小於 70") ? type.prompt : `院前啟動 ECMO 參考標準：\n${DEFAULT_ECMO_CRITERIA}\n\n本段文字可由管理者修改。`,
       };
     }
@@ -488,7 +491,7 @@ function activeStationsForBrigade(brigadeId) {
 }
 
 function activeDepartments() {
-  return state.departments.filter((item) => item.active);
+  return state.departments.filter((item) => item.active && item.id !== "dep-other" && item.name !== "其他科");
 }
 
 function activeDepartmentsForHospital(hospitalId) {
@@ -793,10 +796,15 @@ function recipientsFor(hospitalId, departments) {
     }));
 }
 
+function alertRouteDepartments(type, extraPayload = {}) {
+  if (type.id === "ohca" && extraPayload.decision === "是") return [...(type.ecmoRouteDepartments?.length ? type.ecmoRouteDepartments : ["dep-er", "dep-cvs"])];
+  return [...(type.routeDepartments || [])];
+}
+
 function createAlert({ typeId, hospitalId, extra, image }) {
   const type = alertType(typeId);
-  const recipients = recipientsFor(hospitalId, type.routeDepartments);
   const extraPayload = typeof extra === "object" && extra !== null ? extra : { sex: "不詳", ageRange: "不詳", text: String(extra || "") };
+  const recipients = recipientsFor(hospitalId, alertRouteDepartments(type, extraPayload));
   const alert = {
     id: uid("alert"),
     typeId,
@@ -1979,18 +1987,36 @@ function renderAdminAlertRecord(alert) {
   `;
 }
 
+function renderDepartmentToggleButtons(typeId, routeDepartments = [], routeKind = "default") {
+  return activeDepartments().map((department) => {
+    const selected = routeDepartments.includes(department.id);
+    return `<button type="button" class="department-toggle ${selected ? "selected" : ""}" data-department-id="${department.id}" aria-pressed="${selected ? "true" : "false"}">${department.name}</button>`;
+  }).join("");
+}
+
 function renderAlertTypeAdmin(type) {
+  const routeSettings = type.id === "ohca" ? `
+      <div class="field-label">不啟動 ECMO 通知科別</div>
+      <div class="department-toggle-grid" data-alert-type-id="${type.id}" data-route-kind="default">
+        ${renderDepartmentToggleButtons(type.id, type.routeDepartments || ["dep-er"])}
+      </div>
+      <div class="small muted">不符合啟動 ECMO 時，只通知急診醫學科值班人員。</div>
+      <div class="field-label">啟動 ECMO 通知科別</div>
+      <div class="department-toggle-grid" data-alert-type-id="${type.id}" data-route-kind="ecmo">
+        ${renderDepartmentToggleButtons(type.id, type.ecmoRouteDepartments || ["dep-er", "dep-cvs"], "ecmo")}
+      </div>
+      <div class="small muted">符合啟動 ECMO 時，通知急診醫學科與心臟外科值班人員。</div>
+    ` : `
+      <div class="field-label">通知科別</div>
+      <div class="department-toggle-grid" data-alert-type-id="${type.id}" data-route-kind="default">
+        ${renderDepartmentToggleButtons(type.id, type.routeDepartments || [])}
+      </div>
+      <div class="small muted">院前端選擇醫院後，只會通知該醫院中符合以上科別且當班的人員。</div>
+    `;
   return `
     <article class="item">
       <strong>${type.name}</strong>
-      <div class="field-label">通知科別</div>
-      <div class="department-toggle-grid" data-alert-type-id="${type.id}">
-        ${activeDepartments().map((department) => {
-          const selected = (type.routeDepartments || []).includes(department.id);
-          return `<button type="button" class="department-toggle ${selected ? "selected" : ""}" data-department-id="${department.id}" aria-pressed="${selected ? "true" : "false"}">${department.name}</button>`;
-        }).join("")}
-      </div>
-      <div class="small muted">院前端選擇醫院後，只會通知該醫院中符合以上科別且當班的人員。</div>
+      ${routeSettings}
       <label>提示文字<textarea class="prompt-input" data-id="${type.id}">${escapeHtml(type.prompt)}</textarea></label>
       <div class="actions"><button class="secondary save-alert-type" data-id="${type.id}">儲存設定</button></div>
     </article>
@@ -2075,6 +2101,7 @@ function bindPublic() {
     saveSession();
     touchCurrentUser(true);
     registerNativePushToken();
+    if (nativePushToken) sendPushTokenToServer(nativePushToken);
     view = "dashboard";
     render();
   };
@@ -2104,8 +2131,10 @@ function bindPublic() {
 }
 
 function bindCommon() {
-  document.querySelector("#logout")?.addEventListener("click", () => {
+  document.querySelector("#logout")?.addEventListener("click", async () => {
     stopAlarm();
+    const previousSession = session ? structuredClone(session) : null;
+    await unregisterNativePushToken(previousSession);
     session = null;
     saveSession();
     view = "home";
@@ -2369,7 +2398,7 @@ function buildExtra(data, type) {
   else if (data.typeId === "ohca") lines.push(type.prompt, `是否符合啟動院前 ECMO：${data.decision || "不詳"}`);
   else if (data.typeId === "trauma") lines.push(type.prompt, `是否符合大量輸血條件：${data.decision || "不詳"}`, `是否 OHCA：${data.traumaOhca || "不詳"}`);
   else lines.push(type.prompt || "", `院前端選擇：${data.decision || "不詳"}`);
-  return { sex, ageRange, text: lines.filter(Boolean).join("\n") };
+  return { sex, ageRange, decision: data.decision || "", text: lines.filter(Boolean).join("\n") };
 }
 
 function bindHospitalUser() {
@@ -2617,10 +2646,16 @@ function bindAdmin() {
   }));
   document.querySelectorAll(".save-alert-type").forEach((button) => button.addEventListener("click", () => {
     const type = alertType(button.dataset.id);
-    const routeButtons = document.querySelectorAll(`.department-toggle-grid[data-alert-type-id="${button.dataset.id}"] .department-toggle.selected`);
-    const routeDepartments = Array.from(routeButtons).map((item) => item.dataset.departmentId);
+    const defaultRouteButtons = document.querySelectorAll(`.department-toggle-grid[data-alert-type-id="${button.dataset.id}"][data-route-kind="default"] .department-toggle.selected`);
+    const routeDepartments = Array.from(defaultRouteButtons).map((item) => item.dataset.departmentId);
     if (!routeDepartments.length) return alert("請至少選擇一個通知科別。");
     type.routeDepartments = routeDepartments;
+    if (type.id === "ohca") {
+      const ecmoRouteButtons = document.querySelectorAll(`.department-toggle-grid[data-alert-type-id="${button.dataset.id}"][data-route-kind="ecmo"] .department-toggle.selected`);
+      const ecmoRouteDepartments = Array.from(ecmoRouteButtons).map((item) => item.dataset.departmentId);
+      if (!ecmoRouteDepartments.length) return alert("請至少選擇一個啟動 ECMO 通知科別。");
+      type.ecmoRouteDepartments = ecmoRouteDepartments;
+    }
     type.prompt = document.querySelector(`.prompt-input[data-id="${button.dataset.id}"]`).value;
     saveState();
     render();
@@ -2796,13 +2831,37 @@ function nativePlatform() {
 
 async function sendPushTokenToServer(token) {
   if (!session?.id || !token) return;
+  nativePushToken = token;
   try {
     await fetch(API_PUSH_TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        action: "register",
         userId: session.id,
         token,
+        platform: nativePlatform(),
+      }),
+    });
+  } catch {}
+}
+
+async function unregisterNativePushToken(user = session) {
+  if (!isNativeApp() || !user?.id) return;
+  try {
+    const { PushNotifications } = nativePlugins();
+    await PushNotifications?.removeAllListeners?.();
+  } catch {}
+  pushRegistrationStarted = false;
+  if (!nativePushToken) return;
+  try {
+    await fetch(API_PUSH_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "unregister",
+        userId: user.id,
+        token: nativePushToken,
         platform: nativePlatform(),
       }),
     });
@@ -2819,15 +2878,18 @@ async function registerNativePushToken() {
   } catch {}
   try {
     await PushNotifications.addListener("registration", (token) => {
-      sendPushTokenToServer(token?.value || token);
+      nativePushToken = token?.value || token || "";
+      sendPushTokenToServer(nativePushToken);
     });
     await PushNotifications.addListener("registrationError", (error) => {
       console.warn("push registration failed", error);
     });
     await PushNotifications.addListener("pushNotificationReceived", async () => {
       await loadStateFromServer();
-      const pending = ringingAlertsForCurrentUser();
-      if (pending.length) triggerAlertReminders(pending);
+      if (shouldAutoUnlockAlerts()) {
+        const pending = ringingAlertsForCurrentUser();
+        if (pending.length) triggerAlertReminders(pending);
+      }
       render();
     });
     await PushNotifications.addListener("pushNotificationActionPerformed", async () => {
@@ -2911,6 +2973,7 @@ async function showDeviceNotification(alert) {
 }
 
 function triggerAlertReminders(alerts) {
+  if (!shouldAutoUnlockAlerts()) return;
   startAlarm();
   scheduleAlarmAutoStop(alerts);
   alerts.forEach((alert) => {
