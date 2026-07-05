@@ -320,6 +320,24 @@ def dispatch_new_alert_pushes(previous_state, next_state):
         print(f"Push dispatch for {alert.get('id')}: {result}")
 
 
+def remove_push_token_from_user(user, token):
+    changed = False
+    tokens = []
+    for item in user.get("pushTokens", []) or []:
+        item_token = item.get("token") if isinstance(item, dict) else item
+        if item_token == token:
+            changed = True
+            continue
+        tokens.append(item)
+    if user.get("pushTokens") != tokens:
+        user["pushTokens"] = tokens
+        changed = True
+    if user.get("pushToken") == token:
+        user.pop("pushToken", None)
+        changed = True
+    return changed
+
+
 def register_push_token(payload):
     user_id = str(payload.get("userId", "")).strip()
     token = str(payload.get("token", "")).strip()
@@ -331,18 +349,40 @@ def register_push_token(payload):
         raise ValueError("state not initialized")
     now_ms = int(time.time() * 1000)
     updated = False
+    token_count = 0
+    for user in state.get("users", []) or []:
+        remove_push_token_from_user(user, token)
     for user in state.get("users", []) or []:
         if user.get("id") != user_id:
             continue
         tokens = [item for item in (user.get("pushTokens") or []) if isinstance(item, dict) and item.get("token") != token]
         tokens.insert(0, {"token": token, "platform": platform, "updatedAt": now_ms})
         user["pushTokens"] = tokens[:5]
+        token_count = len(user["pushTokens"])
         updated = True
         break
     if not updated:
         raise ValueError("user not found")
     write_state(state)
-    return {"ok": True, "tokenCount": len(tokens)}
+    return {"ok": True, "tokenCount": token_count}
+
+
+def unregister_push_token(payload):
+    user_id = str(payload.get("userId", "")).strip()
+    token = str(payload.get("token", "")).strip()
+    if not user_id or not token:
+        raise ValueError("missing userId or token")
+    state = read_state()
+    if not state:
+        raise ValueError("state not initialized")
+    changed = False
+    for user in state.get("users", []) or []:
+        if user.get("id") == user_id:
+            changed = remove_push_token_from_user(user, token) or changed
+            break
+    if changed:
+        write_state(state)
+    return {"ok": True, "removed": changed}
 
 
 def read_persisted_state():
@@ -452,7 +492,10 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                self._send_json(register_push_token(payload))
+                if payload.get("action") == "unregister":
+                    self._send_json(unregister_push_token(payload))
+                else:
+                    self._send_json(register_push_token(payload))
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
             return
