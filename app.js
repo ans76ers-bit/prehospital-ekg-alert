@@ -122,6 +122,9 @@ let pendingDeletedDutyIds = [];
 let pendingCanceledAlertIds = [];
 let authMessage = "";
 let registerRole = "prehospital";
+let registerStationCity = "新北市";
+let registerBrigadeId = "b-ntpc-5";
+let registerStationId = "s-tucheng";
 let registerHospitalCity = "新北市";
 let registerHospitalId = "h-tu";
 let dutyRosterDate = today();
@@ -483,14 +486,19 @@ function activeHospitalCities() {
 }
 
 function hospitalCityOptions(selectedCity) {
-  const cities = activeHospitalCities();
-  const source = cities.length ? cities : TAIWAN_CITIES;
-  return source.map((city) => `<option value="${city}" ${city === selectedCity ? "selected" : ""}>${city}</option>`).join("");
+  return cityOptions(selectedCity);
+}
+function normalizeRegisterStationSelection() {
+  if (!TAIWAN_CITIES.includes(registerStationCity)) registerStationCity = "新北市";
+  const brigades = activeBrigadesForCity(registerStationCity);
+  if (!brigades.some((brigade) => brigade.id === registerBrigadeId)) registerBrigadeId = brigades[0]?.id || "";
+  const stations = registerBrigadeId ? activeStationsForBrigade(registerBrigadeId) : [];
+  if (!stations.some((station) => station.id === registerStationId)) registerStationId = stations[0]?.id || "";
+  return { brigades, stations };
 }
 
 function normalizeRegisterHospitalSelection() {
-  const cities = activeHospitalCities();
-  if (!cities.includes(registerHospitalCity)) registerHospitalCity = cities[0] || "新北市";
+  if (!TAIWAN_CITIES.includes(registerHospitalCity)) registerHospitalCity = "新北市";
   const hospitals = activeHospitalsForCity(registerHospitalCity);
   if (!hospitals.some((hospital) => hospital.id === registerHospitalId)) registerHospitalId = hospitals[0]?.id || "";
   return hospitals;
@@ -985,8 +993,10 @@ function renderLogin() {
 }
 
 function renderRegister() {
+  const { brigades: registerBrigades, stations: registerStations } = normalizeRegisterStationSelection();
   const registerHospitals = normalizeRegisterHospitalSelection();
   const isHospitalRegister = registerRole === "hospital";
+  const isPrehospitalRegister = registerRole === "prehospital";
   return `
     <section class="login">
       <form class="login-panel" id="registerForm">
@@ -1003,8 +1013,14 @@ function renderRegister() {
           <label>姓名<input name="name" required /></label>
           <label>電話號碼<input name="phone" required /></label>
           <label>密碼<input name="password" type="password" placeholder="未填則預設為手機號碼" /></label>
-          <label class="pre-register" ${isHospitalRegister ? "hidden" : ""}>所屬分隊
-            <select name="stationId">${activeStations().map((station) => `<option value="${station.id}">${stationLabel(station)}</option>`).join("")}</select>
+          <label class="pre-register" ${isPrehospitalRegister ? "" : "hidden"}>所屬縣市
+            <select id="registerStationCity">${cityOptions(registerStationCity)}</select>
+          </label>
+          <label class="pre-register" ${isPrehospitalRegister ? "" : "hidden"}>所屬大隊
+            <select id="registerBrigadeId">${registerBrigades.map((brigade) => `<option value="${brigade.id}" ${brigade.id === registerBrigadeId ? "selected" : ""}>${brigade.name}</option>`).join("")}</select>
+          </label>
+          <label class="pre-register" ${isPrehospitalRegister ? "" : "hidden"}>所屬分隊
+            <select name="stationId" id="registerStationId">${registerStations.map((station) => `<option value="${station.id}" ${station.id === registerStationId ? "selected" : ""}>${station.name}</option>`).join("")}</select>
           </label>
           <label class="hospital-register" ${isHospitalRegister ? "" : "hidden"}>所屬縣市
             <select id="registerHospitalCity">${hospitalCityOptions(registerHospitalCity)}</select>
@@ -1016,6 +1032,7 @@ function renderRegister() {
             <select name="departmentId">${activeDepartments().map((dep) => `<option value="${dep.id}">${departmentLabel(dep)}</option>`).join("")}</select>
           </label>
         </div>
+        <div class="notice pre-register" ${isPrehospitalRegister ? "" : "hidden"}>如果你所屬的單位沒有在選單中，請洽管理者先於單位設定新增大隊與分隊後再註冊。</div>
         <div class="notice hospital-register" ${isHospitalRegister ? "" : "hidden"}>如果你所屬的醫院沒有在選單中，請洽管理者先於單位設定新增醫院後再註冊。</div>
         <div class="actions">
           <button type="submit">送出註冊申請</button>
@@ -2150,6 +2167,29 @@ function bindPublic() {
     document.querySelectorAll(".pre-register").forEach((item) => (item.hidden = registerRole !== "prehospital"));
     document.querySelectorAll(".hospital-register").forEach((item) => (item.hidden = registerRole !== "hospital"));
   }));
+  document.querySelector("#registerStationCity")?.addEventListener("change", (event) => {
+    registerStationCity = event.currentTarget.value || registerStationCity;
+    const { brigades, stations } = normalizeRegisterStationSelection();
+    const brigadeSelect = document.querySelector("#registerBrigadeId");
+    const stationSelect = document.querySelector("#registerStationId");
+    if (brigadeSelect) {
+      brigadeSelect.innerHTML = brigades.map((brigade) => `<option value="${brigade.id}" ${brigade.id === registerBrigadeId ? "selected" : ""}>${brigade.name}</option>`).join("");
+    }
+    if (stationSelect) {
+      stationSelect.innerHTML = stations.map((station) => `<option value="${station.id}" ${station.id === registerStationId ? "selected" : ""}>${station.name}</option>`).join("");
+    }
+  });
+  document.querySelector("#registerBrigadeId")?.addEventListener("change", (event) => {
+    registerBrigadeId = event.currentTarget.value || "";
+    const { stations } = normalizeRegisterStationSelection();
+    const stationSelect = document.querySelector("#registerStationId");
+    if (stationSelect) {
+      stationSelect.innerHTML = stations.map((station) => `<option value="${station.id}" ${station.id === registerStationId ? "selected" : ""}>${station.name}</option>`).join("");
+    }
+  });
+  document.querySelector("#registerStationId")?.addEventListener("change", (event) => {
+    registerStationId = event.currentTarget.value || "";
+  });
   document.querySelector("#registerHospitalCity")?.addEventListener("change", (event) => {
     registerHospitalCity = event.currentTarget.value || registerHospitalCity;
     const hospitals = normalizeRegisterHospitalSelection();
@@ -2164,6 +2204,10 @@ function bindPublic() {
   document.querySelector("#registerForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    if (data.role === "prehospital" && !data.stationId) {
+      alert("請先選擇所屬分隊；若單位不在選單中，請洽管理者新增。");
+      return;
+    }
     if (data.role === "hospital" && !data.hospitalId) {
       alert("請先選擇所屬醫院；若醫院不在選單中，請洽管理者新增。");
       return;
