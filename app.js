@@ -1970,7 +1970,6 @@ function renderUserAdmin(user) {
   const detail = user.role === "prehospital" ? stationName(user.stationId) : user.role === "hospital" ? `${hospitalName(user.hospitalId)} / ${departmentName(user.departmentId)}` : "管理者";
   const actions = [
     !user.approved ? `<button class="secondary approve-user" data-id="${user.id}">核准</button>` : "",
-    `<button class="secondary save-password" data-id="${user.id}">儲存密碼</button>`,
     user.role !== "admin" ? `<button class="ghost make-admin" data-id="${user.id}">指定管理者</button>` : `<button class="ghost revoke-admin" data-id="${user.id}">取消管理者</button>`,
     `<button class="danger delete-user" data-id="${user.id}">刪除</button>`,
   ].filter(Boolean).join("");
@@ -1988,11 +1987,8 @@ function renderUserAdmin(user) {
         </div>
         <span class="status ${isOnline(user) ? "done" : user.approved ? "opened" : "pending"}">${isOnline(user) ? "在線" : user.approved ? "已核准" : "待審核"}</span>
       </div>
-      <div class="grid two">
-        <label>密碼<input class="password-input" data-id="${user.id}" value="${escapeHtml(user.password || user.phone)}" /></label>
-        <div class="actions">
-          ${actions}
-        </div>
+      <div class="actions">
+        ${actions}
       </div>
     </article>
   `;
@@ -2554,13 +2550,6 @@ function bindAdmin() {
   document.querySelectorAll(".approve-user").forEach((button) => button.addEventListener("click", () => {
     const user = userById(button.dataset.id);
     user.approved = !user.approved;
-    saveState();
-    render();
-  }));
-  document.querySelectorAll(".save-password").forEach((button) => button.addEventListener("click", () => {
-    const user = userById(button.dataset.id);
-    const input = document.querySelector(`.password-input[data-id="${button.dataset.id}"]`);
-    user.password = input.value || user.phone;
     saveState();
     render();
   }));
