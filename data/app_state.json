@@ -1,4 +1,12 @@
 {
+  "brigades": [
+    {
+      "id": "b-ntpc-5",
+      "city": "新北市",
+      "name": "第五救災救護大隊",
+      "active": true
+    }
+  ],
   "stations": [
     {
       "id": "s-tucheng",
@@ -118,7 +126,7 @@
     {
       "id": "dep-other",
       "name": "其他科",
-      "active": true
+      "active": false
     }
   ],
   "users": [
@@ -131,7 +139,10 @@
       "stationId": "s-tucheng",
       "hospitalId": "h-tu",
       "departmentId": "dep-er",
-      "approved": true
+      "approved": true,
+      "lastSeenAt": "2026/7/5 16:52:51",
+      "lastSeenMs": 1783241571059,
+      "lastLoginAt": "2026/7/5 16:42:59"
     }
   ],
   "onDuty": [],
@@ -150,11 +161,14 @@
       "id": "ohca",
       "name": "內科 OHCA",
       "routeDepartments": [
-        "dep-er",
-        "dep-cvs"
+        "dep-er"
       ],
       "active": true,
-      "prompt": "院前啟動 ECMO 參考標準：\n年齡小於 70 歲\n目擊倒地且有人立即 CPR\n初始心律為 VF/VT 或可電擊心律\n無臥床、癌末或其他不可逆末期疾病\n預估報案後 40 分鐘內可抵達醫院\n無明顯大出血\n\n本段文字可由管理者修改。"
+      "prompt": "院前啟動 ECMO 參考標準：\n年齡小於 70 歲\n目擊倒地且有人立即 CPR\n初始心律為 VF/VT 或可電擊心律\n無臥床、癌末或其他不可逆末期疾病\n預估報案後 40 分鐘內可抵達醫院\n無明顯大出血\n\n本段文字可由管理者修改。",
+      "ecmoRouteDepartments": [
+        "dep-er",
+        "dep-cvs"
+      ]
     },
     {
       "id": "trauma",
@@ -177,13 +191,5 @@
       "prompt": "請通報後送醫院急診醫學科醫師與神經內科醫師。"
     }
   ],
-  "alerts": [],
-  "brigades": [
-    {
-      "id": "b-ntpc-5",
-      "city": "新北市",
-      "name": "第五救災救護大隊",
-      "active": true
-    }
-  ]
+  "alerts": []
 }
