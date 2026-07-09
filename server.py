@@ -40,6 +40,10 @@ _firebase_init_attempted = False
 _firebase_ready = False
 
 
+def log(message):
+    print(message, flush=True)
+
+
 def is_retired_hospital(hospital):
     if not isinstance(hospital, dict):
         return False
@@ -187,7 +191,7 @@ def ensure_firebase():
         return _firebase_ready
     _firebase_init_attempted = True
     if not FIREBASE_SERVICE_ACCOUNT_JSON and not FIREBASE_CREDENTIALS_FILE:
-        print("Firebase push disabled: missing FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS")
+        log("Firebase push disabled: missing FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS")
         return False
     try:
         import firebase_admin
@@ -204,10 +208,10 @@ def ensure_firebase():
         options = {"projectId": FIREBASE_PROJECT_ID} if FIREBASE_PROJECT_ID else None
         firebase_admin.initialize_app(cred, options)
         _firebase_ready = True
-        print("Firebase push enabled")
+        log("Firebase push enabled")
         return True
     except Exception as exc:
-        print(f"Firebase push disabled: {exc}")
+        log(f"Firebase push disabled: {exc}")
         _firebase_ready = False
         return False
 
@@ -314,19 +318,29 @@ def send_push_for_alert(state, alert):
             sent += 1
         except Exception as exc:
             failed += 1
-            print(f"FCM send failed for {target.get('userId')}: {exc}")
+            log(f"FCM send failed for {target.get('userId')}: {exc}")
     return {"sent": sent, "failed": failed}
 
 
-def dispatch_new_alert_pushes(previous_state, next_state):
+def dispatch_pending_alert_pushes(previous_state, next_state):
     existing_ids = {alert.get("id") for alert in (previous_state or {}).get("alerts", []) if alert.get("id")}
+    changed = False
     for alert in next_state.get("alerts", []) or []:
-        if alert.get("id") in existing_ids:
-            continue
         if alert.get("status") != "notified":
             continue
+        is_new = alert.get("id") not in existing_ids
+        if alert.get("pushDispatchedAt") and not is_new:
+            continue
         result = send_push_for_alert(next_state, alert)
-        print(f"Push dispatch for {alert.get('id')}: {result}")
+        log(
+            f"Push dispatch for {alert.get('id')}: "
+            f"new={is_new} recipients={len(alert.get('recipients', []) or [])} result={result}"
+        )
+        if result.get("sent", 0) > 0:
+            alert["pushDispatchedAt"] = int(time.time() * 1000)
+            alert["pushDispatchResult"] = result
+            changed = True
+    return changed
 
 
 def remove_push_token_from_user(user, token):
@@ -438,6 +452,7 @@ def write_state(state, deleted_user_ids=None, deleted_duty_ids=None):
     current = read_persisted_state() if deleted_user_ids or deleted_duty_ids or DATABASE_URL or DATA_FILE.exists() else None
     if current:
         state = merge_state(current, state, deleted_user_ids, deleted_duty_ids)
+    dispatch_pending_alert_pushes(current or {}, state)
     if DATABASE_URL:
         with db_connect() as conn:
             ensure_db(conn)
@@ -452,11 +467,9 @@ def write_state(state, deleted_user_ids=None, deleted_duty_ids=None):
                     ("main", json.dumps(state, ensure_ascii=False)),
                 )
             conn.commit()
-        dispatch_new_alert_pushes(current or {}, state)
         return
     DATA_FILE.parent.mkdir(exist_ok=True)
     DATA_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    dispatch_new_alert_pushes(current or {}, state)
 
 
 class Handler(SimpleHTTPRequestHandler):
