@@ -1,6 +1,6 @@
 {
-  "appId": "tw.org.ems.prehospitalekg",
-  "appName": "院前 EKG 通報",
+  "appId": "tw.org.ems.prehospitalekg.chenpin",
+  "appName": "院前 EKG 與急重症通報",
   "webDir": "www",
   "server": {
     "url": "https://prehospital-critical-alert-test.onrender.com",

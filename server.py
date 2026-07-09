@@ -299,6 +299,15 @@ def send_push_for_alert(state, alert):
                     color="#0d766e",
                 ),
             ),
+            apns=messaging.APNSConfig(
+                headers={"apns-priority": "10"},
+                payload=messaging.APNSPayload(
+                    aps=messaging.Aps(
+                        sound="ems_alert.wav",
+                        badge=1,
+                    ),
+                ),
+            ),
         )
         try:
             messaging.send(message)

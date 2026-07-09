@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>院前 EKG 通報</string>
+    <string>院前 EKG 與急重症通報</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -29,6 +29,10 @@
     <key>UIRequiredDeviceCapabilities</key>
     <array>
       <string>armv7</string>
+    </array>
+    <key>UIBackgroundModes</key>
+    <array>
+      <string>remote-notification</string>
     </array>
     <key>UISupportedInterfaceOrientations</key>
     <array>
