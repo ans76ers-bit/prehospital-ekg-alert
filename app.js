@@ -2,11 +2,12 @@ const STORAGE_KEY = "prehospital-critical-alert-test-v1";
 const SESSION_KEY = "prehospital-critical-alert-session-v2";
 const REMEMBER_KEY = "prehospital-critical-alert-remember-v1";
 const API_STATE_URL = "./api/state";
+const API_ALERT_IMAGE_URL = "./api/alert-image";
 const API_PUSH_TOKEN_URL = "./api/push-token";
-const MAX_ALERT_IMAGE_CHARS = 650000;
-const ALERT_IMAGES_TO_KEEP = 3;
-const EKG_IMAGE_MAX_WIDTH = 900;
-const EKG_IMAGE_QUALITY = 0.62;
+const MAX_ALERT_IMAGE_CHARS = 300000;
+const ALERT_IMAGES_TO_KEEP = 2;
+const EKG_IMAGE_MAX_WIDTH = 760;
+const EKG_IMAGE_QUALITY = 0.56;
 const TAIWAN_CITIES = ["基隆市", "臺北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "臺中市", "彰化縣", "南投縣", "雲林縣", "嘉義市", "嘉義縣", "臺南市", "高雄市", "屏東縣", "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"];
 const RETIRED_HOSPITAL_NAMES = ["亞東", "亞東醫院", "為恭", "為恭醫院", "違工", "違工醫院"];
 const RETIRED_HOSPITAL_KEYWORDS = ["亞東", "為恭", "違工"];
@@ -116,6 +117,7 @@ let uploadImage = "";
 let uploadImageInfo = "";
 let selectedAlertTypeId = "";
 let selectedAlertId = "";
+let loadingAlertImageId = "";
 let audio = { context: null, oscillator: null, gain: null, timer: null, autoStopTimer: null };
 let pendingDeletedUserIds = [];
 let pendingDeletedDutyIds = [];
@@ -341,7 +343,11 @@ async function loadStateFromServer() {
       await syncStateToServer();
       return false;
     }
+    const localImages = new Map((state.alerts || []).filter((alert) => alert.image).map((alert) => [alert.id, alert.image]));
     state = migrateState({ ...structuredClone(seed), ...payload.state });
+    state.alerts.forEach((alert) => {
+      if (!alert.image && alert.hasImage && localImages.has(alert.id)) alert.image = localImages.get(alert.id);
+    });
     applyPendingCanceledAlerts();
     writeStateToLocalStorage();
     if ((payload.state.alerts || []).some((alert) => alert.image && alert.image.length > MAX_ALERT_IMAGE_CHARS)) syncStateToServer();
@@ -371,6 +377,33 @@ async function syncStateToServer() {
       pendingCanceledAlertIds = pendingCanceledAlertIds.filter((id) => !state.alerts.some((alert) => alert.id === id && alert.status === "canceled"));
     }
   } catch {}
+}
+
+async function loadAlertImage(alertId) {
+  const alert = state.alerts.find((item) => item.id === alertId);
+  if (!alert || alert.image || (!alert.hasImage && !alert.imageRemoved)) return;
+  loadingAlertImageId = alertId;
+  render();
+  try {
+    const response = await fetch(`${API_ALERT_IMAGE_URL}?id=${encodeURIComponent(alertId)}`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    const fresh = state.alerts.find((item) => item.id === alertId);
+    if (!fresh) return;
+    if (payload.image) {
+      fresh.image = payload.image;
+      fresh.hasImage = true;
+      fresh.imageRemoved = false;
+    } else if (payload.imageRemoved) {
+      fresh.image = "";
+      fresh.hasImage = false;
+      fresh.imageRemoved = true;
+    }
+  } catch {
+  } finally {
+    if (loadingAlertImageId === alertId) loadingAlertImageId = "";
+    if (selectedAlertId === alertId) render();
+  }
 }
 
 function refreshSessionFromState() {
@@ -788,9 +821,10 @@ function imageInfoText(value) {
 async function fitImageForAlert(source) {
   const attempts = [
     [EKG_IMAGE_MAX_WIDTH, EKG_IMAGE_QUALITY],
-    [800, 0.58],
-    [700, 0.54],
-    [600, 0.5],
+    [680, 0.52],
+    [600, 0.48],
+    [520, 0.44],
+    [460, 0.4],
   ];
   let fitted = source;
   for (const [width, quality] of attempts) {
@@ -2091,13 +2125,20 @@ function renderDutyAdmin(duty) {
 function renderAlertModal(id) {
   const alert = state.alerts.find((item) => item.id === id);
   if (!alert) return "";
+  const imageBlock = alert.image
+    ? `<div class="preview"><img src="${alert.image}" alt="uploaded ECG" /></div>`
+    : alert.hasImage
+      ? `<div class="preview empty">${loadingAlertImageId === alert.id ? "EKG 影像載入中..." : "按檢視後會載入 EKG 影像"}</div>`
+      : alert.imageRemoved
+        ? `<div class="preview empty">EKG 影像已因容量控管移除</div>`
+        : "";
   return `
     <div class="modal-backdrop">
       <div class="modal">
         <div class="toolbar"><h2>${alertType(alert.typeId)?.name || alert.typeId} 通報</h2><button class="secondary" id="closeModal">關閉</button></div>
         <div class="meta"><span>${hospitalName(alert.hospitalId)}</span><span>${stationName(alert.sender.stationId)}</span><span>${alert.createdAt}</span></div>
         <div class="notice">${escapeHtml(alert.extraText || alert.extra?.text || alert.extra || "")}</div>
-        ${alert.image ? `<div class="preview"><img src="${alert.image}" alt="uploaded ECG" /></div>` : ""}
+        ${imageBlock}
         <div class="small">${alert.audit.map(escapeHtml).join("<br />")}</div>
       </div>
     </div>
@@ -2281,6 +2322,7 @@ function bindCommon() {
   document.querySelectorAll(".view-alert").forEach((button) => button.addEventListener("click", () => {
     selectedAlertId = button.dataset.id;
     render();
+    loadAlertImage(selectedAlertId);
   }));
   document.querySelectorAll(".cancel-alert").forEach((button) => button.addEventListener("click", () => {
     const item = state.alerts.find((alert) => alert.id === button.dataset.id);
@@ -2852,6 +2894,7 @@ function parseCsv(text) {
 function bindModal() {
   document.querySelector("#closeModal")?.addEventListener("click", () => {
     selectedAlertId = "";
+    loadingAlertImageId = "";
     render();
   });
 }

@@ -1,5 +1,6 @@
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 import json
 import os
 import time
@@ -15,7 +16,7 @@ DEMO_PHONES = {"0900000000", "0911000001", "0912000001", "0912000002", "09120000
 RETIRED_HOSPITAL_IDS = {"h-fy"}
 RETIRED_HOSPITAL_NAMES = {"亞東", "亞東醫院", "為恭", "為恭醫院", "違工", "違工醫院"}
 RETIRED_HOSPITAL_KEYWORDS = {"亞東", "為恭", "違工"}
-MAX_ALERT_IMAGE_CHARS = 650000
+MAX_ALERT_IMAGE_CHARS = 300000
 ALERT_STATUS_RANK = {
     "no-duty": 0,
     "notified": 0,
@@ -68,6 +69,34 @@ def compact_alert_images(state):
                 audit.append(note)
             alert["audit"] = audit
     return state
+
+
+def state_without_alert_images(state):
+    if not isinstance(state, dict):
+        return state
+    public_state = json.loads(json.dumps(state, ensure_ascii=False))
+    for alert in public_state.get("alerts", []) or []:
+        image = alert.get("image")
+        if isinstance(image, str) and image:
+            alert["hasImage"] = True
+            alert["image"] = ""
+        else:
+            alert["hasImage"] = False
+    return public_state
+
+
+def alert_image_payload(alert_id):
+    state = read_state()
+    if not state:
+        return {"image": "", "imageRemoved": True}
+    for alert in state.get("alerts", []) or []:
+        if alert.get("id") != alert_id:
+            continue
+        image = alert.get("image")
+        if isinstance(image, str) and image:
+            return {"image": image, "imageRemoved": False}
+        return {"image": "", "imageRemoved": bool(alert.get("imageRemoved", True))}
+    return {"image": "", "imageRemoved": True}
 
 
 def sanitize_state(payload):
@@ -489,12 +518,20 @@ class Handler(SimpleHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def do_GET(self):
-        if self.path == "/health":
+        parsed = urlparse(self.path)
+        if parsed.path == "/health":
             self._send_json({"ok": True})
             return
-        if self.path == "/api/state":
+        if parsed.path == "/api/state":
             try:
-                self._send_json({"state": read_state()})
+                self._send_json({"state": state_without_alert_images(read_state())})
+            except Exception as exc:
+                self._send_json({"error": str(exc)}, status=500)
+            return
+        if parsed.path == "/api/alert-image":
+            try:
+                alert_id = parse_qs(parsed.query).get("id", [""])[0]
+                self._send_json(alert_image_payload(alert_id))
             except Exception as exc:
                 self._send_json({"error": str(exc)}, status=500)
             return
